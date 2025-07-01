@@ -17,15 +17,17 @@ async function buildManifest() {
         genres: genres.map(g => g.name),
         extra: [
             { name: "search", isRequired: false },
-            { name: "genre", isRequired: false, options: genres.map(g => g.name) }
+            { name: "genre", isRequired: false, options: genres.map(g => g.name) },
+            // Add support for pagination
+            { name: "skip", isRequired: false }
         ]
     }));
 
     return {
         id: 'org.einthusan.stremio',
-        version: '1.2.0',
+        version: '1.3.0',
         name: 'Einthusan',
-        description: 'Fast and efficient addon for South Asian movies, with metadata scraped directly from Einthusan.',
+        description: 'Fast and efficient addon for South Asian movies with pagination, with metadata scraped directly from Einthusan.',
         resources: ['catalog', 'stream', 'meta'],
         types: ['movie'],
         catalogs: catalogs,
@@ -42,6 +44,8 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
     const lang = id.replace('einthusan-', '');
     const searchQuery = extra.search;
     const selectedGenreName = extra.genre;
+    // Get the skip value from the request, default to 0
+    const skip = parseInt(extra.skip || '0', 10);
 
     let genreKey = 'Recent';
     if (selectedGenreName) {
@@ -50,7 +54,8 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
     }
 
     try {
-        metas = await getMovies(lang, genreKey, searchQuery);
+        // Pass the skip value to the scraper function
+        metas = await getMovies(lang, genreKey, searchQuery, skip);
     } catch (error) {
         console.error('Error in catalog handler:', error);
     }
