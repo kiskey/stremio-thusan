@@ -1,0 +1,50 @@
+# This workflow builds the Docker image and pushes it to the GitHub Container Registry (GHCR).
+# It's triggered on every push to the 'main' branch.
+
+name: Docker Publish to GHCR
+
+# Controls when the workflow will run
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    
+    # Grant permissions for the GITHUB_TOKEN to write to the registry
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      # 1. Checkout the repository code
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. Log in to the GitHub Container Registry
+      # This uses a special GITHUB_TOKEN for authentication.
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 3. Extract metadata (tags and labels) for the Docker image
+      # This automatically creates tags like 'latest', 'main', and the commit SHA.
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+
+      # 4. Build the Docker image and push it to GHCR
+      # It uses the tags and labels generated in the previous step.
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
