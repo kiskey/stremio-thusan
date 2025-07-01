@@ -69,7 +69,6 @@ async function getPremiumSession() {
 
     let csrfToken = '';
 
-    // 1. Visit the login page to get the CSRF token
     await crawler.run([{
         url: `${BASE_URL}/login/`,
         session: loginSession,
@@ -80,7 +79,6 @@ async function getPremiumSession() {
         },
     }]);
 
-    // 2. Send the POST request to log in
     const loginUrl = `${BASE_URL}/ajax/login/`;
     const postData = new URLSearchParams({
         'xEvent': 'Login',
@@ -115,7 +113,6 @@ async function getPremiumSession() {
     }
 }
 
-// Fetches a single stream URL, for a specific quality
 async function fetchStream(stremioId, quality, session) {
     const [_, lang, movieId] = stremioId.split(':');
     let watchUrl = `${BASE_URL}/movie/watch/${movieId}/?lang=${lang}`;
@@ -170,7 +167,6 @@ async function fetchStream(stremioId, quality, session) {
     return streamInfo;
 }
 
-// Main function called by the addon handler
 async function getStreamUrls(stremioId) {
     const streams = [];
     const loggedInSession = await getPremiumSession();
@@ -190,50 +186,6 @@ async function getStreamUrls(stremioId) {
     }
 
     return streams;
-}
-
-async function getLanguages() {
-    log('Fetching languages...');
-    const languages = [];
-    
-    await crawler.run([{
-        // We go to the base URL, which may redirect to /intro/
-        url: `${BASE_URL}/`, 
-        handler: ({ $ }) => {
-            
-            // --- THE FIX IS HERE ---
-            // First, try the selector for the intro page.
-            $('section#PGIntro ul li a').each((i, el) => {
-                const href = $(el).attr('href');
-                const langCodeMatch = href.match(/lang=([^&]+)/);
-                if (langCodeMatch) {
-                    const langCode = langCodeMatch[1];
-                    const name = $(el).find('p').text().trim();
-                    if (name && langCode) {
-                        languages.push({ code: langCode, name });
-                    }
-                }
-            });
-
-            // If the intro page selector found nothing, try the main page selector.
-            if (languages.length === 0) {
-                log('Intro page selector failed, trying main page selector...');
-                $('ul.language-list li a').each((i, el) => {
-                    const href = $(el).attr('href');
-                    const langCodeMatch = href.match(/lang=([^&]+)/);
-                    if (langCodeMatch) {
-                        const langCode = langCodeMatch[1];
-                        const name = $(el).find('p').text().trim();
-                        if (name && langCode) {
-                            languages.push({ code: langCode, name });
-                        }
-                    }
-                });
-            }
-        }
-    }]);
-    log(`Found ${languages.length} languages.`);
-    return languages;
 }
 
 async function getMovies(lang, genre, searchQuery, skip = 0) {
@@ -310,7 +262,7 @@ async function getMovieMeta(stremioId) {
 
 
 module.exports = { 
-    getLanguages, 
+    // getLanguages has been removed
     getMovies, 
     getMovieMeta, 
     getStreamUrls,
