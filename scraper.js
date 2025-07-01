@@ -24,29 +24,34 @@ function decodeEinth(lnk) {
     return lnk.slice(0, t) + lnk.slice(-1) + lnk.slice(t + 2, -1);
 }
 
-const crawler = new CheerioCrawler({
-    requestHandler: async (context) => {
-        if (typeof context.request.handler === 'function') {
-            await context.request.handler(context);
-        }
-    },
-    preNavigationHooks: [({ request, session }) => {
-        request.headers = {
-            ...request.headers,
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-        };
-        if (session) {
-            request.headers.Cookie = session.getCookieString(request.url);
-        }
-    }],
-    postNavigationHooks: [({ response, session }) => {
-        if (session) {
-            session.setCookiesFromResponse(response);
-        }
-    }],
-    maxRequestRetries: 3,
-    requestHandlerTimeoutSecs: 45,
-});
+// --- THE FIX IS HERE ---
+// 1. Create a helper function that returns a NEW crawler instance.
+// This ensures every task is isolated and doesn't share state.
+function createCrawler() {
+    return new CheerioCrawler({
+        requestHandler: async (context) => {
+            if (typeof context.request.handler === 'function') {
+                await context.request.handler(context);
+            }
+        },
+        preNavigationHooks: [({ request, session }) => {
+            request.headers = {
+                ...request.headers,
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            };
+            if (session) {
+                request.headers.Cookie = session.getCookieString(request.url);
+            }
+        }],
+        postNavigationHooks: [({ response, session }) => {
+            if (session) {
+                session.setCookiesFromResponse(response);
+            }
+        }],
+        maxRequestRetries: 3,
+        requestHandlerTimeoutSecs: 45,
+    });
+}
 
 // The login function that creates a logged-in session
 async function getPremiumSession() {
@@ -69,6 +74,8 @@ async function getPremiumSession() {
 
     let csrfToken = '';
 
+    // 2. Use a fresh crawler for this task.
+    const crawler = createCrawler();
     await crawler.run([{
         url: `${BASE_URL}/login/`,
         session: loginSession,
@@ -122,7 +129,9 @@ async function fetchStream(stremioId, quality, session) {
 
     log(`Attempting to fetch ${quality} stream from: ${watchUrl}`);
     let streamInfo = null;
-
+    
+    // Use a fresh crawler for this task.
+    const crawler = createCrawler();
     await crawler.run([{
         url: watchUrl,
         session: session,
@@ -195,7 +204,10 @@ async function getMovies(lang, genre, searchQuery, skip = 0) {
         : `${BASE_URL}/movie/results/?lang=${lang}&find=${genre || 'Recent'}`;
     const finalUrl = page > 1 ? `${baseUrl}&page=${page}` : baseUrl;
     log(`Scraping movie list from: ${finalUrl} (skip: ${skip}, page: ${page})`);
+    
     const movies = [];
+    // Use a fresh crawler for this task.
+    const crawler = createCrawler();
     await crawler.run([{
         url: finalUrl,
         handler: ({ $ }) => {
@@ -224,7 +236,10 @@ async function getMovieMeta(stremioId) {
     const [_, lang, movieId] = stremioId.split(':');
     const watchUrl = `${BASE_URL}/movie/watch/${movieId}/?lang=${lang}`;
     log(`Getting meta for ID: ${stremioId} from ${watchUrl}`);
+    
     let scrapedMeta = null;
+    // Use a fresh crawler for this task.
+    const crawler = createCrawler();
     await crawler.run([{
         url: watchUrl,
         handler: ({ $ }) => {
@@ -262,7 +277,6 @@ async function getMovieMeta(stremioId) {
 
 
 module.exports = { 
-    // getLanguages has been removed
     getMovies, 
     getMovieMeta, 
     getStreamUrls,
