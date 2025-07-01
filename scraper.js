@@ -1,11 +1,11 @@
 // scraper.js
 const { CheerioCrawler, log: crawleeLogger, LogLevel } = require('crawlee');
-const axios = require('axios'); // For the final POST request
+const axios = require('axios');
 
 const BASE_URL = process.env.BASE_URL || 'https://einthusan.tv';
 const ID_PREFIX = 'ein';
+const ITEMS_PER_PAGE = 20; // The number of items Einthusan shows per page
 
-// Silence Crawlee's verbose logging unless our own log level is debug
 crawleeLogger.setLevel(process.env.LOG_LEVEL === 'debug' ? LogLevel.DEBUG : LogLevel.INFO);
 
 function log(message, level = 'info') {
@@ -14,6 +14,8 @@ function log(message, level = 'info') {
     }
 }
 
+// ... decodeEinth, crawler setup, and getLanguages function remain the same ...
+// decodeEinth
 function decodeEinth(lnk) {
     const t = 10;
     return lnk.slice(0, t) + lnk.slice(-1) + lnk.slice(t + 2, -1);
@@ -51,15 +53,23 @@ async function getLanguages() {
     return languages;
 }
 
-async function getMovies(lang, genre, searchQuery) {
-    const url = searchQuery
+// Updated to handle the 'skip' parameter
+async function getMovies(lang, genre, searchQuery, skip = 0) {
+    // Translate Stremio's 'skip' into Einthusan's 'page'
+    const page = Math.floor(skip / ITEMS_PER_PAGE) + 1;
+
+    let baseUrl = searchQuery
         ? `${BASE_URL}/movie/results/?lang=${lang}&query=${encodeURIComponent(searchQuery)}`
         : `${BASE_URL}/movie/results/?lang=${lang}&find=${genre || 'Recent'}`;
-    log(`Scraping movie list from: ${url}`);
+    
+    // Append the page parameter if we are not on the first page
+    const finalUrl = page > 1 ? `${baseUrl}&page=${page}` : baseUrl;
+
+    log(`Scraping movie list from: ${finalUrl} (skip: ${skip}, page: ${page})`);
     
     const movies = [];
     await crawler.run([{
-        url,
+        url: finalUrl,
         handler: ({ $ }) => {
             $('div.block1').each((i, el) => {
                 const link = $(el).find('a.movielink');
@@ -79,10 +89,11 @@ async function getMovies(lang, genre, searchQuery) {
             });
         }
     }]);
-    log(`Found ${movies.length} movies for the request.`);
+    log(`Found ${movies.length} movies for this request.`);
     return movies;
 }
 
+// ... getMovieMeta and getStreamUrl functions remain the same ...
 async function getMovieMeta(stremioId) {
     const [_, lang, movieId] = stremioId.split(':');
     const watchUrl = `${BASE_URL}/movie/watch/${movieId}/?lang=${lang}`;
@@ -103,7 +114,6 @@ async function getMovieMeta(stremioId) {
             const poster = posterSrc && (posterSrc.startsWith('http') ? posterSrc : `https:${posterSrc}`);
             const description = $('p.plot').text().trim();
             
-            // Helper to parse info paragraphs
             const getInfo = (label) => {
                 const text = $(`div.info > p:contains("${label}")`).text();
                 return text.replace(label, '').replace(':', '').trim();
@@ -118,7 +128,7 @@ async function getMovieMeta(stremioId) {
                 type: 'movie',
                 name,
                 poster: poster,
-                background: poster, // Use poster as fallback for background
+                background: poster,
                 description,
                 year: year || null,
                 cast: cast.length > 0 ? cast : null,
@@ -137,7 +147,6 @@ async function getStreamUrl(stremioId) {
     const watchUrl = `${BASE_URL}/movie/watch/${movieId}/?lang=${lang}`;
     let streamInfo = null;
 
-    // Use Crawler to get the page and tokens to leverage its stealth features
     await crawler.run([{
         url: watchUrl,
         handler: async ({ $, request }) => {
@@ -149,7 +158,6 @@ async function getStreamUrl(stremioId) {
                 return;
             }
 
-            // Use lightweight axios for the final AJAX POST
             const ajaxUrl = `${BASE_URL}/ajax/movie/watch/${movieId}/?lang=${lang}`;
             const postData = new URLSearchParams({
                 'xEvent': 'UIVideoPlayer.PingOutcome',
