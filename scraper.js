@@ -24,7 +24,17 @@ function decodeEinth(lnk) {
     return lnk.slice(0, t) + lnk.slice(-1) + lnk.slice(t + 2, -1);
 }
 
+// --- THE FIX IS HERE ---
 const crawler = new CheerioCrawler({
+    // This default handler is now defined. It will execute the 
+    // specific 'handler' function passed in each request object.
+    requestHandler: async (context) => {
+        // The context object contains the request, $, etc.
+        // We find the handler on the original request and call it.
+        if (typeof context.request.handler === 'function') {
+            await context.request.handler(context);
+        }
+    },
     preNavigationHooks: [({ request, session }) => {
         request.headers = {
             ...request.headers,
