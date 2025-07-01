@@ -1,7 +1,7 @@
 {
   "name": "stremio-einthusan-addon",
-  "version": "1.2.0",
-  "description": "Einthusan Movies Catalog",
+  "version": "1.3.0",
+  "description": "Fast Stremio addon for Einthusan with pagination support.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
