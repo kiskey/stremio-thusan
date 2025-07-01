@@ -1,5 +1,5 @@
 // scraper.js
-const fs = require('fs'); // Import the Node.js File System module
+const fs = require('fs');
 const { CheerioCrawler, log: crawleeLogger, LogLevel, Session } = require('crawlee');
 const axios = require('axios');
 
@@ -7,7 +7,6 @@ const BASE_URL = process.env.BASE_URL || 'https://einthusan.tv';
 const ID_PREFIX = 'ein';
 const ITEMS_PER_PAGE = 20;
 
-// Set crawlee's log level. 'INFO' is standard, 'DEBUG' is for extreme verbosity.
 crawleeLogger.setLevel(LogLevel.INFO);
 
 function log(message, level = 'info') {
@@ -16,16 +15,13 @@ function log(message, level = 'info') {
     }
 }
 
-// This function creates a new, isolated crawler for each request to prevent race conditions.
 function createCrawler() {
     return new CheerioCrawler({
         requestHandler: async (context) => {
-            // This is our main dispatcher. It calls the 'handler' we attach to each request.
             if (typeof context.request.handler === 'function') {
                 await context.request.handler(context);
             }
         },
-        // We will keep navigation timeouts generous just in case of slow network.
         navigationTimeoutSecs: 45,
         maxRequestRetries: 2,
     });
@@ -44,48 +40,54 @@ async function getMovies(lang, genre, searchQuery, skip = 0) {
 
     await crawler.run([{
         url: finalUrl,
-        handler: ({ $, body }) => { // We destructure 'body' to get the raw HTML
-            
-            // This is the selector from the HTML you provided.
+        handler: ({ $, body }) => {
             const selector = '#UIMovieSummary > ul > li';
             log(`HTML received for ${lang}. Parsing with selector: "${selector}"`);
 
             const movieElements = $(selector);
-            
+
             if (movieElements.length === 0) {
                 log(`Found 0 movie elements for [${lang}]. The page might be empty or is blocking the crawler.`, 'error');
-                
-                // --- POWERFUL DEBUGGING AS REQUESTED ---
-                // Save the exact HTML content the crawler received to a file.
-                const debugFileName = `debug-content-${lang}.html`;
+                const debugFileName = `debug-content-EMPTY-${lang}.html`;
                 fs.writeFileSync(debugFileName, body);
                 log(`SAVED HTML to ./${debugFileName} for inspection.`);
-                
-            } else {
-                log(`Found ${movieElements.length} movie elements on the page for [${lang}].`);
-                movieElements.each((i, el) => {
-                    const listItem = $(el); // The current <li> element
-                    const titleElement = listItem.find('.block2 a.title h3');
-                    const title = titleElement.text().trim();
-                    
-                    if (title) { // Ensure there is a title before proceeding
-                        const linkElement = listItem.find('.block1 a');
-                        const href = linkElement.attr('href');
-                        const poster = listItem.find('.block1 img').attr('src');
-                        const idMatch = href ? href.match(/\/watch\/([a-zA-Z0-9.-]+)\//) : null;
-                        
-                        if (idMatch) {
-                            log(`  [+] Found: ${title}`);
-                            movies.push({
-                                id: `${ID_PREFIX}:${lang}:${idMatch[1]}`,
-                                type: 'movie',
-                                name: title,
-                                poster: poster && poster.startsWith('http') ? poster : `https:${poster}`,
-                            });
-                        }
-                    }
-                });
+                return; // Exit if no list items are found at all
             }
+            
+            log(`Found ${movieElements.length} potential movie list items for [${lang}]. Looping through them...`);
+            movieElements.each((i, el) => {
+                const listItem = $(el);
+
+                // --- POWERFUL DEBUGGING STEP ---
+                // We will log the HTML of the first 2 list items to see their structure.
+                if (i < 2) {
+                    log(`[DEBUG HTML for list item #${i}]:\n${listItem.html()}`);
+                }
+
+                // --- SIMPLIFIED AND CORRECTED SUB-SELECTORS ---
+                const title = listItem.find('.block2 h3').text().trim();
+                const linkElement = listItem.find('.block1 a');
+                const href = linkElement.attr('href');
+                
+                if (title && href) {
+                    const poster = listItem.find('.block1 img').attr('src');
+                    const idMatch = href.match(/\/watch\/([a-zA-Z0-9.-]+)\//);
+                    
+                    if (idMatch) {
+                        log(`  [+] SUCCESS: Extracted "${title}"`);
+                        movies.push({
+                            id: `${ID_PREFIX}:${lang}:${idMatch[1]}`,
+                            type: 'movie',
+                            name: title,
+                            poster: poster && poster.startsWith('http') ? poster : `https:${poster}`,
+                        });
+                    } else {
+                        log(`  [-] FAILED: Found title "${title}" but could not extract a valid ID from href: "${href}"`);
+                    }
+                } else {
+                     log(`  [-] FAILED: Could not extract a title or href for list item #${i}.`);
+                }
+            });
         }
     }]);
 
@@ -96,12 +98,12 @@ async function getMovies(lang, genre, searchQuery, skip = 0) {
 // --- Dummy functions below for simplicity. The main focus is fixing the catalog. ---
 
 async function getMovieMeta(stremioId) {
-    log(`Meta requested for ${stremioId}. (Not implemented in this version)`);
+    log(`Meta requested for ${stremioId}. (To be implemented)`);
     return null;
 }
 
 async function getStreamUrls(stremioId) {
-    log(`Stream requested for ${stremioId}. (Not implemented in this version)`);
+    log(`Stream requested for ${stremioId}. (To be implemented)`);
     return [];
 }
 
