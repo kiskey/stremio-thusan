@@ -2,17 +2,13 @@
 const { addonBuilder } = require('stremio-addon-sdk');
 const { getMovies, getMovieMeta, getStreamUrls, ID_PREFIX } = require('./scraper');
 
-// --- THE FIX IS HERE ---
-// 1. Hardcode the static list of languages. This is faster and more reliable.
+// --- LANGUAGES UPDATED AS REQUESTED ---
 const LANGUAGES = [
     { code: 'tamil', name: 'Tamil' },
     { code: 'hindi', name: 'Hindi' },
     { code: 'telugu', name: 'Telugu' },
     { code: 'malayalam', name: 'Malayalam' },
     { code: 'kannada', name: 'Kannada' },
-    { code: 'bengali', name: 'Bengali' },
-    { code: 'marathi', name: 'Marathi' },
-    { code: 'punjabi', name: 'Punjabi' },
 ];
 
 const genres = [
@@ -21,15 +17,13 @@ const genres = [
     { key: 'StaffPick', name: 'Staff Picks' }
 ];
 
-// 2. The manifest is now built synchronously.
 const manifest = {
     id: 'org.einthusan.stremio',
-    version: '1.5.0', // Bump version for the fix
+    version: '1.9.0', // Final working version
     name: 'Einthusan',
-    description: 'Fast and efficient addon for South Asian movies with Premium HD support and pagination.',
+    description: 'A robust addon for Einthusan movies with advanced debugging.',
     resources: ['catalog', 'stream', 'meta'],
     types: ['movie'],
-    // 3. Map over the hardcoded list to build the catalogs.
     catalogs: LANGUAGES.map(lang => ({
         type: 'movie',
         id: `einthusan-${lang.code}`,
@@ -47,38 +41,33 @@ const manifest = {
 const builder = new addonBuilder(manifest);
 
 builder.defineCatalogHandler(async ({ type, id, extra }) => {
-    console.log('Catalog request:', { type, id, extra });
+    console.log(`[HTTP Request] Catalog: ${id}, Extra: ${JSON.stringify(extra)}`);
     let metas = [];
-
     const lang = id.replace('einthusan-', '');
     const searchQuery = extra.search;
     const selectedGenreName = extra.genre;
     const skip = parseInt(extra.skip || '0', 10);
-
     let genreKey = 'Recent';
     if (selectedGenreName) {
         const foundGenre = genres.find(g => g.name === selectedGenreName);
         if (foundGenre) genreKey = foundGenre.key;
     }
-
     try {
         metas = await getMovies(lang, genreKey, searchQuery, skip);
     } catch (error) {
-        console.error('Error in catalog handler:', error);
+        console.error(`[ERROR] In Catalog Handler for ${id}:`, error);
     }
-
     return { metas };
 });
 
 builder.defineMetaHandler(async ({ type, id }) => {
-    console.log('Meta request:', { type, id });
+    console.log(`[HTTP Request] Meta: ${id}`);
     if (type === 'movie' && id.startsWith(ID_PREFIX)) {
         try {
             const meta = await getMovieMeta(id);
             return { meta };
-        } catch (error)
-        {
-            console.error('Error in meta handler:', error);
+        } catch (error) {
+            console.error(`[ERROR] In Meta Handler for ${id}:`, error);
             return { meta: null };
         }
     }
@@ -86,19 +75,16 @@ builder.defineMetaHandler(async ({ type, id }) => {
 });
 
 builder.defineStreamHandler(async ({ type, id }) => {
-    console.log('Stream request:', { type, id });
+    console.log(`[HTTP Request] Stream: ${id}`);
     let streams = [];
-
     if (type === 'movie' && id.startsWith(ID_PREFIX)) {
         try {
             streams = await getStreamUrls(id);
         } catch (error) {
-            console.error('Error in stream handler:', error);
+            console.error(`[ERROR] In Stream Handler for ${id}:`, error);
         }
     }
-
     return { streams };
 });
 
-// Export the fully built interface directly.
 module.exports = builder.getInterface();
