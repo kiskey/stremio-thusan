@@ -1,4 +1,5 @@
 // scraper.js
+const fs = require('fs');
 const { CheerioCrawler, log: crawleeLogger, LogLevel, Session } = require('crawlee');
 const axios = require('axios');
 
@@ -6,12 +7,10 @@ const BASE_URL = process.env.BASE_URL || 'https://einthusan.tv';
 const ID_PREFIX = 'ein';
 const ITEMS_PER_PAGE = 20;
 
-// --- LOGGING FIX ---
-// We check the environment variable only once and set a simple boolean flag.
+// --- THIS LINE WILL NOW WORK CORRECTLY ---
 const IS_DEBUG_MODE = process.env.LOG_LEVEL === 'debug';
-console.log(`[SERVER] Debug mode is: ${IS_DEBUG_MODE}`); // This will always show, confirming the setting.
+console.log(`[SERVER] Debug mode is: ${IS_DEBUG_MODE}`); // This will now appear!
 
-// Set crawlee's internal log level.
 crawleeLogger.setLevel(LogLevel.INFO);
 
 function createCrawler() {
@@ -45,18 +44,14 @@ async function getMovies(lang, genre, searchQuery, skip = 0) {
             // --- GUARANTEED HTML DUMP AS REQUESTED ---
             if (IS_DEBUG_MODE) {
                 console.log(`[SCRAPER][DEBUG] ---- START OF RAW HTML FOR ${lang} ----`);
-                // Log the first 2000 characters of the received HTML body.
-                console.log(body.substring(0, 2000));
+                const debugFileName = `debug-content-${lang}.html`;
+                fs.writeFileSync(debugFileName, body);
+                console.log(`[SCRAPER][DEBUG] DUMPED HTML to ./${debugFileName}`);
                 console.log(`[SCRAPER][DEBUG] ---- END OF RAW HTML FOR ${lang} ----`);
             }
 
-            // --- SELECTOR EXPLANATION ---
-            // Based on the HTML you provided, movies are inside a <section> with the id="UIMovieSummary".
-            // Inside that, there is an unordered list <ul>.
-            // Each movie is a list item <li> directly inside that <ul>.
-            // Therefore, the correct and specific CSS selector is: '#UIMovieSummary > ul > li'
             const selector = '#UIMovieSummary > ul > li';
-            console.log(`[SCRAPER][INFO] Parsing with selector: "${selector}"`);
+            if (IS_DEBUG_MODE) console.log(`[SCRAPER][DEBUG] Parsing with selector: "${selector}"`);
 
             const movieElements = $(selector);
 
@@ -93,7 +88,6 @@ async function getMovies(lang, genre, searchQuery, skip = 0) {
 }
 
 // --- Dummy functions below for simplicity. ---
-
 async function getMovieMeta(stremioId) {
     console.log(`[SCRAPER][INFO] Meta requested for ${stremioId}. (Not implemented)`);
     return null;
