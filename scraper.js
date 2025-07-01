@@ -24,13 +24,8 @@ function decodeEinth(lnk) {
     return lnk.slice(0, t) + lnk.slice(-1) + lnk.slice(t + 2, -1);
 }
 
-// --- THE FIX IS HERE ---
 const crawler = new CheerioCrawler({
-    // This default handler is now defined. It will execute the 
-    // specific 'handler' function passed in each request object.
     requestHandler: async (context) => {
-        // The context object contains the request, $, etc.
-        // We find the handler on the original request and call it.
         if (typeof context.request.handler === 'function') {
             await context.request.handler(context);
         }
@@ -40,13 +35,11 @@ const crawler = new CheerioCrawler({
             ...request.headers,
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
         };
-        // Persist cookies across requests for a session
         if (session) {
             request.headers.Cookie = session.getCookieString(request.url);
         }
     }],
     postNavigationHooks: [({ response, session }) => {
-        // Save cookies from the response for the next request
         if (session) {
             session.setCookiesFromResponse(response);
         }
@@ -109,7 +102,6 @@ async function getPremiumSession() {
 
     if (loginResponse.data && loginResponse.data.Message === "success") {
         log('Premium login successful.');
-        // Save the successful cookies back to the session object
         const cookies = loginResponse.headers['set-cookie'];
         if (cookies) {
             loginSession.setCookies(cookies.map(c => ({...c, domain: new URL(BASE_URL).hostname})), loginUrl);
@@ -136,7 +128,7 @@ async function fetchStream(stremioId, quality, session) {
 
     await crawler.run([{
         url: watchUrl,
-        session: session, // Use the provided session (logged-in or new)
+        session: session,
         handler: async ({ $, request }) => {
             const ejp = $('section#UIVideoPlayer').attr('data-ejpingables');
             const csrfToken = $('section#UIVideoPlayer').attr('data-pageid');
@@ -184,18 +176,14 @@ async function getStreamUrls(stremioId) {
     const loggedInSession = await getPremiumSession();
 
     if (loggedInSession) {
-        // --- Premium User Flow ---
         log('Executing premium user stream search...');
         const hdStream = await fetchStream(stremioId, 'HD', loggedInSession);
         if (hdStream) streams.push(hdStream);
     }
     
-    // --- Fallback / Free User Flow ---
     log('Executing standard SD stream search (fallback)...');
-    // Use a new, clean session for the SD request to avoid conflicts
     const sdStream = await fetchStream(stremioId, 'SD', new Session()); 
     if (sdStream) {
-        // Avoid adding duplicate SD streams if HD failed but we are logged in
         if (!streams.find(s => s.url === sdStream.url)) {
             streams.push(sdStream);
         }
@@ -205,20 +193,43 @@ async function getStreamUrls(stremioId) {
 }
 
 async function getLanguages() {
-    log('Fetching languages from homepage...');
+    log('Fetching languages...');
     const languages = [];
+    
     await crawler.run([{
-        url: `${BASE_URL}/`,
+        // We go to the base URL, which may redirect to /intro/
+        url: `${BASE_URL}/`, 
         handler: ({ $ }) => {
-            $('ul.language-list li a').each((i, el) => {
+            
+            // --- THE FIX IS HERE ---
+            // First, try the selector for the intro page.
+            $('section#PGIntro ul li a').each((i, el) => {
                 const href = $(el).attr('href');
                 const langCodeMatch = href.match(/lang=([^&]+)/);
                 if (langCodeMatch) {
                     const langCode = langCodeMatch[1];
                     const name = $(el).find('p').text().trim();
-                    if (name && langCode) languages.push({ code: langCode, name });
+                    if (name && langCode) {
+                        languages.push({ code: langCode, name });
+                    }
                 }
             });
+
+            // If the intro page selector found nothing, try the main page selector.
+            if (languages.length === 0) {
+                log('Intro page selector failed, trying main page selector...');
+                $('ul.language-list li a').each((i, el) => {
+                    const href = $(el).attr('href');
+                    const langCodeMatch = href.match(/lang=([^&]+)/);
+                    if (langCodeMatch) {
+                        const langCode = langCodeMatch[1];
+                        const name = $(el).find('p').text().trim();
+                        if (name && langCode) {
+                            languages.push({ code: langCode, name });
+                        }
+                    }
+                });
+            }
         }
     }]);
     log(`Found ${languages.length} languages.`);
