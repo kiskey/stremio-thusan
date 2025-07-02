@@ -21,18 +21,14 @@ function decodeEinth(lnk) {
 
 async function initializeAuth() {
     console.log('[AUTH] Initializing authentication module...');
-    // This will attempt to log in once at startup and cache the client.
     await getAuthenticatedClient();
     console.log('[AUTH] Authentication module ready.');
 }
 
 async function getAuthenticatedClient() {
-    // If we are already authenticated, return the client immediately.
     if (isAuthenticated) {
         return client;
     }
-
-    // If no credentials are provided, return the basic, non-logged-in client.
     if (!PREMIUM_USERNAME || !PREMIUM_PASSWORD) {
         console.log('[AUTH] No premium credentials. Using a non-logged-in client.');
         return client;
@@ -42,12 +38,12 @@ async function getAuthenticatedClient() {
     try {
         const loginPageRes = await client.get(`${BASE_URL}/login/`);
         const $ = cheerio.load(loginPageRes.data);
-        const csrfToken = $('html').attr('data-pageid')?.replace(/\+/g, '+');
+        const csrfToken = $('html').attr('data-pageid')?.replace(/+/g, '+');
 
         if (!csrfToken) throw new Error('Could not find CSRF token on the login page.');
         console.log('[AUTH] Successfully retrieved CSRF token.');
 
-        // --- THE FIX IS HERE: Including the tabID as per the working script ---
+        // --- DEFINITIVE FIX #1: The payload is now identical to the working script ---
         const loginPayload = new URLSearchParams({
             'xEvent': 'Login',
             'xJson': JSON.stringify({ Email: PREMIUM_USERNAME, Password: PREMIUM_PASSWORD }),
@@ -56,19 +52,22 @@ async function getAuthenticatedClient() {
         });
 
         const loginRes = await client.post(`${BASE_URL}/ajax/login/`, loginPayload.toString(), {
+            // --- DEFINITIVE FIX #2: Headers now match the working script ---
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
                 'X-Requested-With': 'XMLHttpRequest',
+                'Origin': BASE_URL,
                 'Referer': `${BASE_URL}/login/`,
             },
         });
 
         if (loginRes.data?.Event !== 'redirect' && loginRes.data?.Message !== 'success') {
-            throw new Error('Login failed. The server did not return a success message. Please check credentials.');
+            throw new Error('Login failed. Server response did not indicate success. Please check credentials.');
         }
 
+        // --- DEFINITIVE FIX #3: The finalization GET request ---
         if (loginRes.data.Data) {
-            console.log('[AUTH] Login successful, finalizing session by visiting account page...');
+            console.log('[AUTH] Login successful, finalizing session...');
             await client.get(`${BASE_URL}${loginRes.data.Data}`);
         }
         
@@ -77,7 +76,6 @@ async function getAuthenticatedClient() {
 
     } catch (error) {
         console.error(`[AUTH] A fatal error occurred during login: ${error.message}`);
-        // The client remains non-authenticated, but the app can continue.
     }
     
     return client;
@@ -86,7 +84,6 @@ async function getAuthenticatedClient() {
 async function fetchStream(client, moviePageUrl, quality) {
     console.log(`[STREAMER] Attempting to fetch ${quality} stream from: ${moviePageUrl}`);
     
-    // As per your evidence, premium URLs have a /premium/ prefix
     const usePremiumUrl = quality === 'HD' && isAuthenticated;
     const urlToVisit = usePremiumUrl ? moviePageUrl.replace('/movie/', '/premium/movie/') : moviePageUrl;
     console.log(`[STREAMER] Visiting URL: ${urlToVisit}`);
@@ -98,7 +95,7 @@ async function fetchStream(client, moviePageUrl, quality) {
         const videoPlayerSection = $('#UIVideoPlayer');
         const ejp = videoPlayerSection.attr('data-ejpingables');
         const hlsLink = videoPlayerSection.attr('data-hls-link');
-        const csrfToken = $('html').attr('data-pageid')?.replace(/\+/g, '+');
+        const csrfToken = $('html').attr('data-pageid')?.replace(/+/g, '+');
 
         if (hlsLink) {
             console.log(`[STREAMER] Successfully found direct HLS link for ${quality}.`);
@@ -146,6 +143,7 @@ async function getStreamUrls(moviePageUrl) {
         if (hdStream) streams.push(hdStream);
     }
     
+    // The same client (now with or without login cookies) is used for the SD attempt.
     const sdStream = await fetchStream(client, moviePageUrl, 'SD');
     if (sdStream && !streams.find(s => s.url === sdStream.url)) {
         streams.push(sdStream);
