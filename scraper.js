@@ -110,7 +110,7 @@ async function fetchStream(stremioId, quality, session) {
 
             // --- THE DEFINITIVE FIX IS HERE ---
             // The invalid regex has been replaced to correctly handle the HTML entity.
-            const csrfToken = csrfMatch ? csrfMatch[1].replace(/+/g, '+') : null;
+            const csrfToken = csrfMatch ? csrfMatch[1].replace(/\+/g, '+') : null;
 
             if (!ejp || !csrfToken) {
                 log(`Could not find tokens for ${quality} stream for ${stremioId}.`, 'error');
