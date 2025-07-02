@@ -3,17 +3,18 @@ require('dotenv').config();
 const express = require('express');
 const { serveHTTP } = require('stremio-addon-sdk');
 const addonInterface = require('./addon');
-const { initializeDatabase } = require('./database');
+const { initializeDatabase, migrateDatabaseSchema } = require('./database');
 const { startWorker } = require('./worker');
-// --- THE FIX IS HERE (Part 2) ---
+const { startTmdbWorker } = require('./tmdb_worker');
 const { initializeAuth } = require('./auth');
 
 async function startApp() {
     try {
         await initializeDatabase();
-        console.log('[SERVER] Database initialized successfully.');
+        console.log('[SERVER] Database connection pool initialized.');
 
-        // Initialize the authentication module's session pool
+        await migrateDatabaseSchema();
+
         await initializeAuth();
 
         const app = express();
@@ -30,6 +31,7 @@ async function startApp() {
         console.log(`[SERVER] Addon server running on http://localhost:${port}`);
 
         startWorker();
+        startTmdbWorker();
 
     } catch (error) {
         console.error('[SERVER] Failed to start application:', error);
