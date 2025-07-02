@@ -110,7 +110,7 @@ async function fetchStream(client, moviePageUrl, quality) {
         const videoPlayerSection = $('#UIVideoPlayer');
         const ejp = videoPlayerSection.attr('data-ejpingables');
         const hlsLink = videoPlayerSection.attr('data-hls-link');
-        const csrfToken = $('html').attr('data-pageid')?.replace(/+/g, '+');
+        const csrfToken = $('html').attr('data-pageid')?.replace(/\+/g, '+');
 
         if (hlsLink) {
             console.log(`[STREAMER] Successfully found direct HLS link for ${quality}.`);
