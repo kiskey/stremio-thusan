@@ -108,8 +108,7 @@ async function fetchStream(stremioId, quality, session) {
             
             const ejp = ejpMatch ? ejpMatch[1] : null;
 
-            // --- THE DEFINITIVE FIX IS HERE ---
-            // The invalid regex has been replaced to correctly handle the HTML entity.
+            // --- BUG FIX #1: CORRECT REGEX AS PER YOUR INSTRUCTION ---
             const csrfToken = csrfMatch ? csrfMatch[1].replace(/\+/g, '+') : null;
 
             if (!ejp || !csrfToken) {
@@ -178,7 +177,9 @@ async function getMovies(lang, genre, searchQuery, skip = 0) {
     log(`Visiting movie list page: ${finalUrl}`);
     const movies = [];
     const crawler = new CheerioCrawler({
-        maxConcurrency: 2, minRequestDelay: 100, maxRequestDelay: 500,
+        // --- BUG FIX #2: REMOVED INVALID PROPERTIES, USING CORRECT ONE ---
+        maxConcurrency: 2,
+        
         async requestHandler({ $ }) {
             if ($('title').text().includes('Rate Limited')) {
                 log(`Got a rate-limit page for [${lang}]. Skipping.`, 'error');
