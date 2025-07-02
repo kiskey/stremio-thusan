@@ -24,15 +24,24 @@ async function getPremiumSession() {
 
     console.log('[AUTH] Attempting premium login...');
     
-    // --- FIX #1: Correctly instantiate Session as per your recommendation ---
+    // --- FIX #1: Correctly instantiate Session with an empty options object ---
     const loginSession = new Session({});
 
     let csrfToken = '';
 
-    const crawler = new CheerioCrawler({ maxRequests: 1, async requestHandler({ $ }) {
-        csrfToken = $('#login-form').attr('data-pageid');
-    }});
-    await crawler.run([`${BASE_URL}/login/`]);
+    const crawler = new CheerioCrawler({
+        maxRequests: 1,
+        // The request handler will use the session passed into the run command
+        async requestHandler({ $ }) {
+            csrfToken = $('#login-form').attr('data-pageid');
+        }
+    });
+    
+    // --- FIX #2: Wire the loginSession into the crawler run ---
+    await crawler.run([{
+        url: `${BASE_URL}/login/`,
+        session: loginSession,
+    }]);
     
     if (!csrfToken) {
         console.error('[AUTH] Could not find CSRF token on login page.');
@@ -55,7 +64,7 @@ async function getPremiumSession() {
             console.log('[AUTH] Premium login successful!');
             const cookies = loginResponse.headers['set-cookie'];
             if (cookies) {
-                // --- FIX #2: Implemented your bonus tip for safer cookie parsing ---
+                // --- FIX #3: Implemented your bonus tip for safer cookie parsing ---
                 const sessionCookies = cookies.map(cookieStr => {
                     const [cookiePair] = cookieStr.split(';');
                     const [name, ...valParts] = cookiePair.split('=');
@@ -87,10 +96,10 @@ async function getStreamUrls(moviePageUrl) {
     console.log('[STREAMER] Executing standard SD stream search (fallback)...');
     
     // --- FIX #1 (Applied here as well): Correctly instantiate Session ---
-    const sdStream = await fetchStream(moviePageUrl, 'SD', new Session({})); 
+    const sdSession = new Session({});
+    const sdStream = await fetchStream(moviePageUrl, 'SD', sdSession); 
 
     if (sdStream) {
-        // Avoid adding duplicate SD streams if HD failed but we are logged in
         if (!streams.find(s => s.url === sdStream.url)) {
             streams.push(sdStream);
         }
