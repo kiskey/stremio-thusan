@@ -14,7 +14,6 @@ if (!TMDB_API_KEY) {
  * @returns {Promise<object|null>} A promise that resolves to an object with {tmdb_id, imdb_id} or null if a network error occurs.
  */
 async function enrichMovieFromTMDB(movie) {
-    // If no API key is provided, do nothing. The worker will not even start.
     if (!TMDB_API_KEY) {
         return null;
     }
@@ -32,7 +31,6 @@ async function enrichMovieFromTMDB(movie) {
         });
 
         const searchResults = searchResponse.data.results;
-        // If TMDB returns no results, we still return a value to mark this movie as "processed".
         if (!searchResults || searchResults.length === 0) {
             console.log(`[TMDB] No results found for "${movie.title}" (${movie.year}). Marking as processed.`);
             return { tmdb_id: -1, imdb_id: null }; // Use -1 to signify "not found"
@@ -45,7 +43,7 @@ async function enrichMovieFromTMDB(movie) {
         const movieResponse = await axios.get(movieUrl, {
             params: {
                 api_key: TMDB_API_KEY,
-                append_to_response: 'external_ids' // This is efficient, gets details and IDs in one call
+                append_to_response: 'external_ids'
             }
         });
 
@@ -60,10 +58,8 @@ async function enrichMovieFromTMDB(movie) {
         return { tmdb_id: tmdbId, imdb_id: imdbId };
 
     } catch (error) {
-        // If an error occurs (e.g., TMDB is down, network issue), log it and return null.
-        // Returning null signals to the worker that this movie should be retried later.
         console.error(`[TMDB] API Error while enriching movie "${movie.title}":`, error.message);
-        return null;
+        return null; // Return null to signal that this movie should be retried later.
     }
 }
 
