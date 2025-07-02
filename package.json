@@ -1,7 +1,7 @@
 {
   "name": "stremio-einthusan-addon",
-  "version": "3.2.0",
-  "description": "A persistent, database-backed Stremio addon for Einthusan with correct dependencies.",
+  "version": "4.0.0",
+  "description": "The final, working, database-backed Stremio addon for Einthusan.",
   "main": "server.js",
   "scripts": {
     "start": "node -r dotenv/config server.js",
@@ -9,9 +9,11 @@
   },
   "dependencies": {
     "axios": "^1.6.8",
+    "cheerio": "^1.0.0-rc.12",
     "crawlee": "^3.9.2",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
+    "node-fetch": "^2.7.0",
     "pg": "^8.11.5",
     "stremio-addon-sdk": "^1.6.10"
   },
