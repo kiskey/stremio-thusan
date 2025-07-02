@@ -38,7 +38,7 @@ async function getPremiumSession() {
     const loginSession = new Session({ sessionPool: { isSessionUsable: async (s) => !s.isBlocked() } });
     let csrfToken = '';
 
-    const crawler = new CheerioCrawler({ maxRequests: 1, async requestHandler({ $ }) {
+    const crawler = new CheerioCrawler({ async requestHandler({ $ }) {
         csrfToken = $('#login-form').attr('data-pageid');
     }});
     await crawler.run([`${BASE_URL}/login/`]);
@@ -99,7 +99,7 @@ async function fetchStream(stremioId, quality, session) {
     let streamInfo = null;
 
     const crawler = new CheerioCrawler({
-        maxRequests: 1,
+        // --- BUG FIX: REMOVED INVALID maxRequests PROPERTY ---
         async requestHandler({ $, body }) {
             const videoPlayerHtml = $('#UIVideoPlayer').toString();
             const rootHtml = $('html').toString();
@@ -107,9 +107,7 @@ async function fetchStream(stremioId, quality, session) {
             const csrfMatch = rootHtml.match(/data-pageid="([^"]+)"/);
             
             const ejp = ejpMatch ? ejpMatch[1] : null;
-
-            // --- BUG FIX #1: CORRECT REGEX AS PER YOUR INSTRUCTION ---
-            const csrfToken = csrfMatch ? csrfMatch[1].replace(/\+/g, '+') : null;
+            const csrfToken = csrfMatch ? csrfMatch[1].replace(/+/g, '+') : null;
 
             if (!ejp || !csrfToken) {
                 log(`Could not find tokens for ${quality} stream for ${stremioId}.`, 'error');
@@ -177,9 +175,7 @@ async function getMovies(lang, genre, searchQuery, skip = 0) {
     log(`Visiting movie list page: ${finalUrl}`);
     const movies = [];
     const crawler = new CheerioCrawler({
-        // --- BUG FIX #2: REMOVED INVALID PROPERTIES, USING CORRECT ONE ---
         maxConcurrency: 2,
-        
         async requestHandler({ $ }) {
             if ($('title').text().includes('Rate Limited')) {
                 log(`Got a rate-limit page for [${lang}]. Skipping.`, 'error');
@@ -216,7 +212,7 @@ async function getMovieMeta(stremioId) {
     log(`Getting meta for ID: ${stremioId} from ${watchUrl}`);
     let scrapedMeta = null;
     const crawler = new CheerioCrawler({
-        maxRequests: 1,
+        // --- BUG FIX: REMOVED INVALID maxRequests PROPERTY ---
         async requestHandler({ $ }) {
             const name = $('div.single-title > h1').text().replace(/Watch Online/, '').trim();
             if (!name) return;
