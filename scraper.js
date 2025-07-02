@@ -1,58 +1,25 @@
 // scraper.js
-const fetch = require('node-fetch');
-const cheerio = require('cheerio');
-// --- THE FIX IS HERE ---
-// We now import getStreamUrls from auth.js where it lives.
+const { CheerioCrawler } = require('crawlee');
+// We only import getStreamUrls, as it's the only function needed from auth.js
 const { getStreamUrls } = require('./auth');
 
 const BASE_URL = process.env.BASE_URL || 'https://einthusan.tv';
 const ID_PREFIX = 'ein';
-const PROXY_URLS = (process.env.PROXY_URLS || '').split(',').map(url => url.trim()).filter(Boolean);
-
-if (PROXY_URLS.length > 0) {
-    console.log(`[SCRAPER] Loaded ${PROXY_URLS.length} proxies for rotation.`);
-} else {
-    console.log('[SCRAPER] No proxies configured. Will make direct requests.');
-}
-
-function shuffleProxies() {
-    const shuffled = [...PROXY_URLS];
-    for (let i = shuffled.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-    }
-    return shuffled;
-}
 
 async function scrapePage(lang, pageNum) {
     const finalUrl = `${BASE_URL}/movie/results/?find=Recent&lang=${lang}&page=${pageNum}`;
-    console.log(`[SCRAPER] Beginning scrape job for: ${finalUrl}`);
-    const proxiesToTry = PROXY_URLS.length > 0 ? shuffleProxies() : [null];
+    console.log(`[SCRAPER] Scraping page: ${finalUrl}`);
+    const movies = [];
+    let rateLimited = false;
 
-    for (const proxyUrl of proxiesToTry) {
-        const proxyIdentifier = proxyUrl || 'DIRECT';
-        try {
-            let htmlContent;
-            if (proxyUrl) {
-                const res = await fetch(proxyUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ pageURL: finalUrl })
-                });
-                htmlContent = await res.text();
-            } else {
-                const res = await fetch(finalUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36' }});
-                htmlContent = await res.text();
-            }
-
-            const $ = cheerio.load(htmlContent);
-
+    const crawler = new CheerioCrawler({
+        maxConcurrency: 2,
+        async requestHandler({ $ }) {
             if ($('title').text().includes('Rate Limited')) {
-                console.error(`[SCRAPER] Proxy ${proxyIdentifier} was RATE LIMITED. Rotating to next proxy.`);
-                continue;
+                console.error(`[SCRAPER] Got a rate-limit page for [${lang}].`);
+                rateLimited = true;
+                return;
             }
-
-            const movies = [];
             $('#UIMovieSummary > ul > li').each((i, el) => {
                 const listItem = $(el);
                 const title = listItem.find('.block2 h3').text().trim();
@@ -76,18 +43,11 @@ async function scrapePage(lang, pageNum) {
                     }
                 }
             });
-            
-            console.log(`[SCRAPER] SUCCESS via ${proxyIdentifier}. Found ${movies.length} movies.`);
-            return { movies, rateLimited: false };
-
-        } catch (error) {
-            console.error(`[SCRAPER] Proxy ${proxyIdentifier} FAILED: ${error.message}. Rotating to next proxy.`);
-            continue;
         }
-    }
+    });
 
-    console.error(`[SCRAPER] All proxies failed for ${finalUrl}. Signaling worker to pause.`);
-    return { movies: [], rateLimited: true };
+    await crawler.run([finalUrl]);
+    return { movies, rateLimited };
 }
 
 module.exports = { 
