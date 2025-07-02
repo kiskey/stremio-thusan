@@ -71,7 +71,7 @@ async function fetchStream(moviePageUrl, quality, session) {
         async requestHandler({ $ }) {
             const videoPlayerSection = $('#UIVideoPlayer');
             const ejp = videoPlayerSection.attr('data-ejpingables');
-            const csrfToken = $('html').attr('data-pageid')?.replace(/+/g, '+');
+            const csrfToken = $('html').attr('data-pageid')?.replace(/\+/g, '+');
 
             if (!ejp || !csrfToken) {
                 log(`Could not find tokens for ${quality} stream.`, 'error');
