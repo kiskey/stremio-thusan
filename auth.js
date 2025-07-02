@@ -8,11 +8,29 @@ const BASE_URL = process.env.BASE_URL || 'https://einthusan.tv';
 const PREMIUM_USERNAME = process.env.EINTHUSAN_USERNAME;
 const PREMIUM_PASSWORD = process.env.EINTHUSAN_PASSWORD;
 
-// This single, stateful client will be shared across the application.
 const jar = new CookieJar();
 const client = wrapper(axios.create({ jar }));
 
 let isAuthenticated = false;
+
+// --- THE FIX IS HERE (Part 1): The IP Replacement Function ---
+function replaceIpInStreamUrl(streamInfo) {
+    if (!streamInfo || !streamInfo.url) {
+        return streamInfo; // Return as-is if there's no URL
+    }
+    // This regex finds an IP address at the start of a URL, following http(s)://
+    const ipRegex = /https?:\/\/\b(?:\d{1,3}\.){3}\d{1,3}\b/;
+    const replacementDomain = 'https://cdn1.einthusan.io';
+    
+    const originalUrl = streamInfo.url;
+    streamInfo.url = originalUrl.replace(ipRegex, replacementDomain);
+
+    if (originalUrl !== streamInfo.url) {
+        console.log(`[STREAMER] Replaced IP in stream URL. New URL: ${streamInfo.url}`);
+    }
+    
+    return streamInfo;
+}
 
 function decodeEinth(lnk) {
     const t = 10;
@@ -38,12 +56,11 @@ async function getAuthenticatedClient() {
     try {
         const loginPageRes = await client.get(`${BASE_URL}/login/`);
         const $ = cheerio.load(loginPageRes.data);
-        const csrfToken = $('html').attr('data-pageid')?.replace(/\+/g, '+');
+        const csrfToken = $('html').attr('data-pageid')?.replace(/+/g, '+');
 
         if (!csrfToken) throw new Error('Could not find CSRF token on the login page.');
         console.log('[AUTH] Successfully retrieved CSRF token.');
 
-        // --- DEFINITIVE FIX #1: The payload is now identical to the working script ---
         const loginPayload = new URLSearchParams({
             'xEvent': 'Login',
             'xJson': JSON.stringify({ Email: PREMIUM_USERNAME, Password: PREMIUM_PASSWORD }),
@@ -52,7 +69,6 @@ async function getAuthenticatedClient() {
         });
 
         const loginRes = await client.post(`${BASE_URL}/ajax/login/`, loginPayload.toString(), {
-            // --- DEFINITIVE FIX #2: Headers now match the working script ---
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
                 'X-Requested-With': 'XMLHttpRequest',
@@ -65,7 +81,6 @@ async function getAuthenticatedClient() {
             throw new Error('Login failed. Server response did not indicate success. Please check credentials.');
         }
 
-        // --- DEFINITIVE FIX #3: The finalization GET request ---
         if (loginRes.data.Data) {
             console.log('[AUTH] Login successful, finalizing session...');
             await client.get(`${BASE_URL}${loginRes.data.Data}`);
@@ -95,7 +110,7 @@ async function fetchStream(client, moviePageUrl, quality) {
         const videoPlayerSection = $('#UIVideoPlayer');
         const ejp = videoPlayerSection.attr('data-ejpingables');
         const hlsLink = videoPlayerSection.attr('data-hls-link');
-        const csrfToken = $('html').attr('data-pageid')?.replace(/\+/g, '+');
+        const csrfToken = $('html').attr('data-pageid')?.replace(/+/g, '+');
 
         if (hlsLink) {
             console.log(`[STREAMER] Successfully found direct HLS link for ${quality}.`);
@@ -139,14 +154,20 @@ async function getStreamUrls(moviePageUrl) {
     const client = await getAuthenticatedClient();
 
     if (isAuthenticated) {
-        const hdStream = await fetchStream(client, moviePageUrl, 'HD');
-        if (hdStream) streams.push(hdStream);
+        let hdStream = await fetchStream(client, moviePageUrl, 'HD');
+        if (hdStream) {
+            // --- THE FIX IS HERE (Part 2): Applying the replacement ---
+            streams.push(replaceIpInStreamUrl(hdStream));
+        }
     }
     
-    // The same client (now with or without login cookies) is used for the SD attempt.
-    const sdStream = await fetchStream(client, moviePageUrl, 'SD');
-    if (sdStream && !streams.find(s => s.url === sdStream.url)) {
-        streams.push(sdStream);
+    let sdStream = await fetchStream(client, moviePageUrl, 'SD');
+    if (sdStream) {
+        // --- THE FIX IS HERE (Part 2): Applying the replacement ---
+        sdStream = replaceIpInStreamUrl(sdStream);
+        if (!streams.find(s => s.url === sdStream.url)) {
+            streams.push(sdStream);
+        }
     }
 
     return streams;
