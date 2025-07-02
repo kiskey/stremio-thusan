@@ -107,7 +107,7 @@ async function fetchStream(stremioId, quality, session) {
             const csrfMatch = rootHtml.match(/data-pageid="([^"]+)"/);
             
             const ejp = ejpMatch ? ejpMatch[1] : null;
-            const csrfToken = csrfMatch ? csrfMatch[1].replace(/+/g, '+') : null;
+            const csrfToken = csrfMatch ? csrfMatch[1].replace(/\+/g, '+') : null;
 
             if (!ejp || !csrfToken) {
                 log(`Could not find tokens for ${quality} stream for ${stremioId}.`, 'error');
