@@ -1,8 +1,8 @@
 // addon.js
 const { addonBuilder } = require('stremio-addon-sdk');
-const { getMoviesForCatalog, getMovieForMeta } = require('./database');
-// --- FIX: Importing ID_PREFIX ---
-const { getStreamUrls, ID_PREFIX } = require('./scraper');
+const { getMoviesForCatalog, getMovieForMeta, getMovieByImdbId } = require('./database');
+const { getStreamUrls } = require('./auth');
+const { ID_PREFIX } = require('./scraper');
 
 const LANGUAGES = [
     { code: 'tamil', name: 'Tamil' },
@@ -13,10 +13,10 @@ const LANGUAGES = [
 ];
 
 const manifest = {
-    id: 'org.einthusan.stremio',
-    version: '3.3.0', // Final working version
+    id: 'org.einthusan.stremio.db',
+    version: '4.0.0',
     name: 'Einthusan (DB)',
-    description: 'A persistent, database-backed addon for Einthusan with background scraping.',
+    description: 'A persistent, database-backed addon for Einthusan with background scraping and TMDB enrichment.',
     resources: ['catalog', 'stream', 'meta'],
     types: ['movie'],
     catalogs: LANGUAGES.map(lang => ({
@@ -25,8 +25,7 @@ const manifest = {
         name: `Einthusan ${lang.name}`,
         extra: [{ name: "search", isRequired: false }, { name: "skip", isRequired: false }]
     })),
-    // This line will now work correctly
-    idPrefixes: [ID_PREFIX]
+    idPrefixes: [ID_PREFIX, 'tt']
 };
 
 const builder = new addonBuilder(manifest);
@@ -42,14 +41,31 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
 });
 
 builder.defineMetaHandler(async ({ type, id }) => {
-    console.log(`[ADDON] Serving meta for ${id} from database`);
-    const meta = await getMovieForMeta(id);
-    return { meta };
+    console.log(`[ADDON] Serving meta for ${id}`);
+    
+    let result;
+    if (id.startsWith('tt')) {
+        console.log(`[ADDON] Meta request is for an IMDb ID: ${id}`);
+        result = await getMovieByImdbId(id);
+    } else {
+        result = await getMovieForMeta(id);
+    }
+
+    return { meta: result.meta };
 });
 
 builder.defineStreamHandler(async ({ type, id }) => {
     console.log(`[ADDON] Fetching on-demand streams for ${id}`);
-    const movie = await getMovieForMeta(id);
+
+    let result;
+    if (id.startsWith('tt')) {
+        console.log(`[ADDON] Stream request is for an IMDb ID: ${id}`);
+        result = await getMovieByImdbId(id);
+    } else {
+        result = await getMovieForMeta(id);
+    }
+    
+    const movie = result.meta;
     if (!movie || !movie.movie_page_url) {
         console.error(`[ADDON] Could not find movie page URL for ID: ${id}`);
         return { streams: [] };
