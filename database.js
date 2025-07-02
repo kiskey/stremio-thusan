@@ -12,18 +12,11 @@ async function initializeDatabase() {
     const adminClient = new Client({ connectionString: adminUrl });
     try {
         await adminClient.connect();
-        console.log(`[DB] Connected to 'postgres' database to check for '${ADDON_DB_NAME}'.`);
         const res = await adminClient.query(`SELECT 1 FROM pg_database WHERE datname = $1`, [ADDON_DB_NAME]);
         if (res.rowCount === 0) {
-            console.log(`[DB] Database '${ADDON_DB_NAME}' does not exist. Creating...`);
             await adminClient.query(`CREATE DATABASE ${ADDON_DB_NAME}`);
             console.log(`[DB] Successfully created database '${ADDON_DB_NAME}'.`);
-        } else {
-            console.log(`[DB] Database '${ADDON_DB_NAME}' already exists.`);
         }
-    } catch (err) {
-        console.error('[DB] Error during database creation check:', err);
-        throw err;
     } finally {
         await adminClient.end();
     }
@@ -31,7 +24,6 @@ async function initializeDatabase() {
     const appDbUrl = new URL(adminUrl);
     appDbUrl.pathname = `/${ADDON_DB_NAME}`;
     pool = new Pool({ connectionString: appDbUrl.toString() });
-    console.log(`[DB] Main connection pool created for '${ADDON_DB_NAME}'.`);
 
     const appClient = await pool.connect();
     try {
@@ -48,8 +40,17 @@ async function initializeDatabase() {
                 last_scraped_at TIMESTAMPTZ DEFAULT NOW()
             );
         `);
-        // The migration logic from the previous step is assumed to be here as well
-        // to handle adding columns like director and cast if needed.
+        
+        // --- NEW: Create the scrape progress tracking table ---
+        await appClient.query(`
+            CREATE TABLE IF NOT EXISTS ${SCHEMA_NAME}.scrape_progress (
+                lang VARCHAR(50) PRIMARY KEY,
+                last_page_scraped INT NOT NULL DEFAULT 0,
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            );
+        `);
+        console.log('[DB] All tables are ready.');
+
     } finally {
         appClient.release();
     }
@@ -88,24 +89,41 @@ async function getMovieForMeta(id) {
     if (res.rows.length > 0) {
         const movie = res.rows[0];
         return {
-            id: movie.id,
-            type: 'movie',
-            name: movie.title,
-            poster: movie.poster,
-            background: movie.poster,
-            description: movie.description,
-            year: movie.year,
-            // --- THE FIX IS HERE ---
-            // We now include the movie_page_url so the stream handler can use it.
+            id: movie.id, type: 'movie', name: movie.title, poster: movie.poster,
+            background: movie.poster, description: movie.description, year: movie.year,
             movie_page_url: movie.movie_page_url,
         };
     }
     return null;
 }
 
-async function getMovieCount() {
-    const res = await pool.query(`SELECT COUNT(*) FROM ${SCHEMA_NAME}.movies;`);
-    return parseInt(res.rows[0].count, 10);
+// --- NEW: Functions to manage scrape progress ---
+
+async function getScrapeProgress(lang) {
+    const query = `SELECT last_page_scraped FROM ${SCHEMA_NAME}.scrape_progress WHERE lang = $1;`;
+    const res = await pool.query(query, [lang]);
+    if (res.rows.length > 0) {
+        return res.rows[0].last_page_scraped;
+    }
+    return 0; // Default to 0 if no record exists
 }
 
-module.exports = { initializeDatabase, upsertMovie, getMoviesForCatalog, getMovieForMeta, getMovieCount };
+async function updateScrapeProgress(lang, page) {
+    const query = `
+        INSERT INTO ${SCHEMA_NAME}.scrape_progress (lang, last_page_scraped, updated_at)
+        VALUES ($1, $2, NOW())
+        ON CONFLICT (lang) DO UPDATE SET
+            last_page_scraped = $2,
+            updated_at = NOW();
+    `;
+    await pool.query(query, [lang, page]);
+}
+
+module.exports = {
+    initializeDatabase,
+    upsertMovie,
+    getMoviesForCatalog,
+    getMovieForMeta,
+    getScrapeProgress,
+    updateScrapeProgress,
+};
