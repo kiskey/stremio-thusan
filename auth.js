@@ -1,7 +1,7 @@
 // auth.js
 const axios = require('axios');
-// --- THE FIX IS HERE: We must also import SessionPool ---
-const { CheerioCrawler, Session, SessionPool } = require('crawlee');
+// We only need Session from crawlee for this file.
+const { CheerioCrawler, Session } = require('crawlee');
 
 const BASE_URL = process.env.BASE_URL || 'https://einthusan.tv';
 const PREMIUM_USERNAME = process.env.EINTHUSAN_USERNAME;
@@ -24,14 +24,8 @@ async function getPremiumSession() {
 
     console.log('[AUTH] Attempting premium login...');
     
-    // --- THE FIX IS HERE ---
-    // 1. Create an actual instance of SessionPool.
-    const sessionPool = new SessionPool({
-        isSessionUsable: async (s) => !s.isBlocked(),
-    });
-
-    // 2. Pass the pool instance to the Session constructor.
-    const loginSession = new Session({ sessionPool });
+    // --- FIX #1: Correctly instantiate Session as per your recommendation ---
+    const loginSession = new Session();
 
     let csrfToken = '';
 
@@ -61,9 +55,14 @@ async function getPremiumSession() {
             console.log('[AUTH] Premium login successful!');
             const cookies = loginResponse.headers['set-cookie'];
             if (cookies) {
-                const sessionCookies = cookies.map(c => ({ name: c.split(';')[0].split('=')[0], value: c.split(';')[0].split('=')[1] }));
+                // --- FIX #2: Implemented your bonus tip for safer cookie parsing ---
+                const sessionCookies = cookies.map(cookieStr => {
+                    const [cookiePair] = cookieStr.split(';');
+                    const [name, ...valParts] = cookiePair.split('=');
+                    return { name: name.trim(), value: valParts.join('=') };
+                });
                 loginSession.setCookies(sessionCookies, loginUrl);
-                premiumSession = loginSession;
+                premiumSession = loginSession; // Cache the successful session
                 return premiumSession;
             }
         } else {
@@ -87,12 +86,11 @@ async function getStreamUrls(moviePageUrl) {
     
     console.log('[STREAMER] Executing standard SD stream search (fallback)...');
     
-    // --- FIXING THE IDENTICAL BUG FOR THE SD STREAM ---
-    const sdStream = await fetchStream(moviePageUrl, 'SD', new Session({
-        sessionPool: new SessionPool({ isSessionUsable: async (s) => !s.isBlocked() })
-    })); 
+    // --- FIX #1 (Applied here as well): Correctly instantiate Session ---
+    const sdStream = await fetchStream(moviePageUrl, 'SD', new Session()); 
 
     if (sdStream) {
+        // Avoid adding duplicate SD streams if HD failed but we are logged in
         if (!streams.find(s => s.url === sdStream.url)) {
             streams.push(sdStream);
         }
@@ -110,7 +108,7 @@ async function fetchStream(moviePageUrl, quality, session) {
         async requestHandler({ $ }) {
             const videoPlayerSection = $('#UIVideoPlayer');
             const ejp = videoPlayerSection.attr('data-ejpingables');
-            const csrfToken = $('html').attr('data-pageid')?.replace(/\+/g, '+');
+            const csrfToken = $('html').attr('data-pageid')?.replace(/+/g, '+');
 
             if (!ejp || !csrfToken) {
                 console.error(`[STREAMER] Could not find tokens for ${quality} stream.`);
