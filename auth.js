@@ -1,54 +1,59 @@
 // auth.js
 const axios = require('axios');
-const { CheerioCrawler, SessionPool, Session } = require('crawlee');
+const { CheerioCrawler, Session } = require('crawlee');
 
 const BASE_URL = process.env.BASE_URL || 'https://einthusan.tv';
 const PREMIUM_USERNAME = process.env.EINTHUSAN_USERNAME;
 const PREMIUM_PASSWORD = process.env.EINTHUSAN_PASSWORD;
 
-// This pool is created but NOT yet initialized.
-const loginPool = new SessionPool({ maxPoolSize: 1 });
-let premiumSessionIsAuthenticated = false;
-
-// --- THE FIX IS HERE (Part 1) ---
-// A new function to be called once at server startup.
-async function initializeAuth() {
-    console.log('[AUTH] Initializing session pool...');
-    await loginPool.initialize();
-    console.log('[AUTH] Session pool initialized successfully.');
-}
+// This will hold our single, authenticated session object once login is complete.
+let premiumSession = null;
 
 function decodeEinth(lnk) {
     const t = 10;
     return lnk.slice(0, t) + lnk.slice(-1) + lnk.slice(t + 2, -1);
 }
 
+// Helper function to parse cookies as per your previous recommendation
+function parseCookies(setCookieHeaders) {
+    return setCookieHeaders.map(header => {
+        const [pair] = header.split(';');
+        const [name, ...vals] = pair.split('=');
+        return { name: name.trim(), value: vals.join('=') };
+    });
+}
+
 async function getPremiumSession() {
-    if (premiumSessionIsAuthenticated) {
-        console.log('[AUTH] Using cached premium session from pool.');
-        // The pool is now guaranteed to be initialized.
-        return await loginPool.getSession();
+    // If we already have a valid, cached session, return it.
+    if (premiumSession && !premiumSession.isBlocked()) {
+        console.log('[AUTH] Using cached premium session.');
+        return premiumSession;
     }
     if (!PREMIUM_USERNAME || !PREMIUM_PASSWORD) {
         return null;
     }
 
     console.log('[AUTH] Attempting premium login...');
-    const session = await loginPool.getSession();
     let csrfToken = '';
 
+    // --- THE FIX IS HERE: Using the correct crawler configuration ---
     const crawler = new CheerioCrawler({
-        sessionPool: loginPool,
+        useSessionPool: true,
+        sessionPoolOptions: {
+            maxPoolSize: 1,
+            isSessionUsable: async (s) => !s.isBlocked(),
+        },
+        persistCookiesPerSession: true,
         maxRequests: 1,
         async requestHandler({ $ }) {
             csrfToken = $('#login-form').attr('data-pageid');
-        }
+        },
     });
 
-    await crawler.run([{ url: `${BASE_URL}/login/`, session: session }]);
-    
+    await crawler.run([{ url: `${BASE_URL}/login/` }]);
+
     if (!csrfToken) {
-        console.error('[AUTH] Could not find CSRF token on login page.');
+        console.error('[AUTH] Could not find CSRF token.');
         return null;
     }
 
@@ -64,28 +69,43 @@ async function getPremiumSession() {
         });
 
         if (loginResponse.data?.Message !== 'success') {
-            console.error('[AUTH] Login failed, server did not return success. Please check credentials.');
-            session.retire(); // Mark the session as unusable
+            console.error('[AUTH] Login failed, bad credentials.');
             return null;
         }
 
         console.log('[AUTH] Premium login successful!');
-        const setCookieHeaders = loginResponse.headers['set-cookie'] || [];
-        const cookies = setCookieHeaders.map(header => {
-            const [pair] = header.split(';');
-            const [name, ...vals] = pair.split('=');
-            return { name: name.trim(), value: vals.join('=') };
-        });
-        
-        session.setCookies(cookies, `${BASE_URL}/`);
-        premiumSessionIsAuthenticated = true;
-        return session;
+        const cookies = parseCookies(loginResponse.headers['set-cookie'] || []);
+
+        // Grab the single session that CheerioCrawler created and used.
+        premiumSession = crawler.sessionPool.sessions[0];
+        premiumSession.setCookies(cookies, `${BASE_URL}/`);
+        return premiumSession;
 
     } catch (error) {
         console.error(`[AUTH] An error occurred during the login AJAX request: ${error.message}`);
-        session.retire();
         return null;
     }
+}
+
+async function getStreamUrls(moviePageUrl) {
+    const streams = [];
+    const loggedInSession = await getPremiumSession();
+
+    if (loggedInSession) {
+        console.log('[STREAMER] Fetching HD via premium session…');
+        const hdStream = await fetchStream(moviePageUrl, 'HD', loggedInSession);
+        if (hdStream) streams.push(hdStream);
+    }
+
+    console.log('[STREAMER] Falling back to SD (no login)…');
+    // For the SD stream, we don't need a persistent session, so a one-off is fine.
+    const sdSession = new Session({});
+    const sdStream = await fetchStream(moviePageUrl, 'SD', sdSession);
+    if (sdStream && !streams.find(s => s.url === sdStream.url)) {
+        streams.push(sdStream);
+    }
+
+    return streams;
 }
 
 async function fetchStream(moviePageUrl, quality, session) {
@@ -94,6 +114,7 @@ async function fetchStream(moviePageUrl, quality, session) {
     const urlToVisit = quality === 'HD' ? `${moviePageUrl}&uhd=true` : moviePageUrl;
 
     const crawler = new CheerioCrawler({
+        // This crawler uses the session passed into its run() call.
         async requestHandler({ $ }) {
             const videoPlayerSection = $('#UIVideoPlayer');
             const ejp = videoPlayerSection.attr('data-ejpingables');
@@ -140,24 +161,4 @@ async function fetchStream(moviePageUrl, quality, session) {
     return streamInfo;
 }
 
-async function getStreamUrls(moviePageUrl) {
-    const streams = [];
-    const premiumSession = await getPremiumSession();
-
-    if (premiumSession) {
-        console.log('[STREAMER] Fetching HD via premium session…');
-        const hdStream = await fetchStream(moviePageUrl, 'HD', premiumSession);
-        if (hdStream) streams.push(hdStream);
-    }
-
-    console.log('[STREAMER] Falling back to SD (no login)…');
-    const sdSession = new Session({}); // This is correct for a one-off, non-pooled session
-    const sdStream = await fetchStream(moviePageUrl, 'SD', sdSession);
-    if (sdStream && !streams.find(s => s.url === sdStream.url)) {
-        streams.push(sdStream);
-    }
-
-    return streams;
-}
-
-module.exports = { initializeAuth, getStreamUrls };
+module.exports = { getStreamUrls };
