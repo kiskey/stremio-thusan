@@ -1,6 +1,7 @@
 // auth.js
 const axios = require('axios');
-const { CheerioCrawler, Session } = require('crawlee');
+// --- THE FIX IS HERE: We must also import SessionPool ---
+const { CheerioCrawler, Session, SessionPool } = require('crawlee');
 
 const BASE_URL = process.env.BASE_URL || 'https://einthusan.tv';
 const PREMIUM_USERNAME = process.env.EINTHUSAN_USERNAME;
@@ -18,19 +19,19 @@ async function getPremiumSession() {
         return premiumSession;
     }
     if (!PREMIUM_USERNAME || !PREMIUM_PASSWORD) {
-        // This is not an error, just the normal flow for free users.
         return null;
     }
 
     console.log('[AUTH] Attempting premium login...');
     
     // --- THE FIX IS HERE ---
-    // The Session constructor now receives the required options object.
-    const loginSession = new Session({
-        sessionPool: {
-            isSessionUsable: async (s) => !s.isBlocked(),
-        },
+    // 1. Create an actual instance of SessionPool.
+    const sessionPool = new SessionPool({
+        isSessionUsable: async (s) => !s.isBlocked(),
     });
+
+    // 2. Pass the pool instance to the Session constructor.
+    const loginSession = new Session({ sessionPool });
 
     let csrfToken = '';
 
@@ -62,7 +63,7 @@ async function getPremiumSession() {
             if (cookies) {
                 const sessionCookies = cookies.map(c => ({ name: c.split(';')[0].split('=')[0], value: c.split(';')[0].split('=')[1] }));
                 loginSession.setCookies(sessionCookies, loginUrl);
-                premiumSession = loginSession; // Cache the successful session
+                premiumSession = loginSession;
                 return premiumSession;
             }
         } else {
@@ -74,7 +75,6 @@ async function getPremiumSession() {
     return null;
 }
 
-// This function was missing from the previous module.exports
 async function getStreamUrls(moviePageUrl) {
     const streams = [];
     const loggedInSession = await getPremiumSession();
@@ -86,9 +86,12 @@ async function getStreamUrls(moviePageUrl) {
     }
     
     console.log('[STREAMER] Executing standard SD stream search (fallback)...');
+    
+    // --- FIXING THE IDENTICAL BUG FOR THE SD STREAM ---
     const sdStream = await fetchStream(moviePageUrl, 'SD', new Session({
-        sessionPool: { isSessionUsable: async (s) => !s.isBlocked() }
+        sessionPool: new SessionPool({ isSessionUsable: async (s) => !s.isBlocked() })
     })); 
+
     if (sdStream) {
         if (!streams.find(s => s.url === sdStream.url)) {
             streams.push(sdStream);
@@ -98,7 +101,6 @@ async function getStreamUrls(moviePageUrl) {
     return streams;
 }
 
-// This function was also missing from the previous module.exports
 async function fetchStream(moviePageUrl, quality, session) {
     console.log(`[STREAMER] Attempting to fetch ${quality} stream from: ${moviePageUrl}`);
     let streamInfo = null;
@@ -108,7 +110,7 @@ async function fetchStream(moviePageUrl, quality, session) {
         async requestHandler({ $ }) {
             const videoPlayerSection = $('#UIVideoPlayer');
             const ejp = videoPlayerSection.attr('data-ejpingables');
-            const csrfToken = $('html').attr('data-pageid')?.replace(/\+/g, '+');
+            const csrfToken = $('html').attr('data-pageid')?.replace(/+/g, '+');
 
             if (!ejp || !csrfToken) {
                 console.error(`[STREAMER] Could not find tokens for ${quality} stream.`);
