@@ -1,47 +1,52 @@
 // scraper.js
-const { CheerioCrawler, log: crawleeLogger, LogLevel, Session } = require('crawlee');
-const axios = require('axios');
-const { getPremiumSession, decodeEinth } = require('./auth');
+const { CheerioCrawler } = require('crawlee');
+const { getStreamUrls } = require('./auth'); // We will move stream logic to auth to keep this clean
 
 const BASE_URL = process.env.BASE_URL || 'https://einthusan.tv';
 const ID_PREFIX = 'ein';
+const PROXY_URL = process.env.PROXY_URL;
 
-const IS_DEBUG_MODE = process.env.LOG_LEVEL === 'debug';
-crawleeLogger.setLevel(LogLevel.INFO);
-
-function log(message, level = 'info') {
-    if (IS_DEBUG_MODE || level === 'error') {
-        console.log(`[SCRAPER][${level.toUpperCase()}] ${message}`);
-    }
-}
-
-async function getMovies(lang, genre, searchQuery, skip = 0) {
-    const pageNum = Math.floor(skip / 20) + 1;
-    const finalUrl = `${BASE_URL}/movie/results/?lang=${lang}&${searchQuery ? `query=${encodeURIComponent(searchQuery)}` : `find=${genre || 'Recent'}`}&page=${pageNum}`;
-    log(`Visiting movie list page: ${finalUrl}`);
-
+async function scrapePage(pageUrl) {
+    console.log(`[SCRAPER] Scraping page: ${pageUrl}`);
     const movies = [];
-    
+    let rateLimited = false;
+
+    // We must use a real browser to get metadata, as it's often loaded by JS
     const crawler = new CheerioCrawler({
         maxConcurrency: 2,
-        async requestHandler({ $ }) {
+        minRequestDelay: 500,
+        maxRequestDelay: 2000,
+        async requestHandler({ $, request, log }) {
             if ($('title').text().includes('Rate Limited')) {
-                log(`Got a rate-limit page for [${lang}]. Skipping.`, 'error');
+                log.error(`Got a rate-limit page for ${request.url}.`);
+                rateLimited = true;
                 return;
             }
-            const selector = '#UIMovieSummary > ul > li';
-            const movieElements = $(selector);
 
-            movieElements.each((i, el) => {
+            // Scrape the list page
+            $('#UIMovieSummary > ul > li').each((i, el) => {
                 const listItem = $(el);
                 const title = listItem.find('.block2 h3').text().trim();
                 const href = listItem.find('.block1 a').attr('href');
                 if (title && href) {
-                    const poster = listItem.find('.block1 img').attr('src');
                     const idMatch = href.match(/\/watch\/([a-zA-Z0-9.-]+)\//);
                     if (idMatch) {
                         const movieId = idMatch[1];
+                        const lang = new URLSearchParams(href.split('?')[1]).get('lang');
+                        const poster = listItem.find('.block1 img').attr('src');
                         const yearText = listItem.find('.info p').first().text();
+                        
+                        // Extract director and cast from the list page itself
+                        const professionals = [];
+                        listItem.find('.professionals .prof').each((i, profEl) => {
+                            const name = $(profEl).find('p').text().trim();
+                            const role = $(profEl).find('label').text().trim();
+                            professionals.push({ name, role });
+                        });
+
+                        const director = professionals.find(p => p.role === 'Director')?.name || null;
+                        const cast = professionals.filter(p => p.role !== 'Director').map(p => p.name);
+
                         movies.push({
                             id: `${ID_PREFIX}:${lang}:${movieId}`,
                             lang,
@@ -50,6 +55,8 @@ async function getMovies(lang, genre, searchQuery, skip = 0) {
                             poster: poster && !poster.startsWith('http') ? `https:${poster}` : poster,
                             movie_page_url: `${BASE_URL}${href}`,
                             description: listItem.find('p.synopsis').text().trim(),
+                            director,
+                            cast,
                         });
                     }
                 }
@@ -57,28 +64,8 @@ async function getMovies(lang, genre, searchQuery, skip = 0) {
         }
     });
 
-    await crawler.run([finalUrl]);
-    log(`Scraping finished for [${lang}]. Returning ${movies.length} movies.`);
-    return { movies, rateLimited: false };
+    await crawler.run([pageUrl]);
+    return { movies, rateLimited };
 }
 
-async function getStreamUrls(moviePageUrl) {
-    log(`[STREAMER] Fetching streams for: ${moviePageUrl}`);
-    const streams = [];
-    const session = await getPremiumSession();
-    
-    if (session) {
-        log('[STREAMER] Logged in. HD stream fetching would be implemented here.');
-    } else {
-        log('[STREAMER] Not logged in. SD stream fetching would be implemented here.');
-    }
-    
-    return streams;
-}
-
-module.exports = { 
-    // --- FIX: Exporting ID_PREFIX ---
-    scrapePage: getMovies, 
-    getStreamUrls,
-    ID_PREFIX
-};
+module.exports = { scrapePage, getStreamUrls };
