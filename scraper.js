@@ -108,8 +108,7 @@ async function fetchStream(stremioId, quality, session) {
             
             const ejp = ejpMatch ? ejpMatch[1] : null;
 
-            // --- THE FIX IS HERE ---
-            // The invalid regex /+/g has been corrected to look for the HTML entity '+'
+            // --- THE CORRECTED LINE ---
             const csrfToken = csrfMatch ? csrfMatch[1].replace(/+/g, '+') : null;
 
             if (!ejp || !csrfToken) {
