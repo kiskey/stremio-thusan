@@ -5,17 +5,13 @@ let pool = null;
 const ADDON_DB_NAME = 'stremio_addons';
 const SCHEMA_NAME = 'einthusan';
 
-// Function for safe table migration
 async function migrateDatabaseSchema() {
     const client = await pool.connect();
     try {
         console.log('[DB MIGRATION] Checking schema for enrichment columns...');
-        // Check if tmdb_id column exists
         const checkEnrichmentCols = await client.query(`
             SELECT 1 FROM information_schema.columns 
-            WHERE table_schema = '${SCHEMA_NAME}' 
-            AND table_name = 'movies' 
-            AND column_name = 'tmdb_id'
+            WHERE table_schema = '${SCHEMA_NAME}' AND table_name = 'movies' AND column_name = 'tmdb_id'
         `);
 
         if (checkEnrichmentCols.rowCount === 0) {
@@ -126,6 +122,19 @@ async function getMoviesForCatalog(lang, skip, limit) {
     return res.rows.map(row => ({ ...row, type: 'movie' }));
 }
 
+async function searchMovies(lang, searchTerm) {
+    console.log(`[DB] Searching for term: "${searchTerm}" in language: ${lang}`);
+    const query = `
+        SELECT id, title AS name, poster, year FROM ${SCHEMA_NAME}.movies
+        WHERE lang = $1 AND title ILIKE $2
+        ORDER BY year DESC, title ASC
+        LIMIT 50;
+    `;
+    const values = [lang, `%${searchTerm}%`];
+    const res = await pool.query(query, values);
+    return res.rows.map(row => ({ ...row, type: 'movie' }));
+}
+
 async function getMovieForMeta(id) {
     const query = `SELECT * FROM ${SCHEMA_NAME}.movies WHERE id = $1;`;
     const res = await pool.query(query, [id]);
@@ -133,14 +142,14 @@ async function getMovieForMeta(id) {
         const movie = res.rows[0];
         return {
             meta: {
-                id: movie.imdb_id || movie.id, // Prefer IMDb ID for Stremio ecosystem
+                id: movie.imdb_id || movie.id,
                 type: 'movie',
                 name: movie.title,
                 poster: movie.poster,
                 background: movie.poster,
                 description: movie.description,
                 year: movie.year,
-                movie_page_url: movie.movie_page_url, // Internal use
+                movie_page_url: movie.movie_page_url,
             }
         };
     }
@@ -210,6 +219,7 @@ module.exports = {
     migrateDatabaseSchema,
     upsertMovie,
     getMoviesForCatalog,
+    searchMovies,
     getMovieForMeta,
     getMovieByImdbId,
     getScrapeProgress,
