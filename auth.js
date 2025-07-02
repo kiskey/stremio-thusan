@@ -8,12 +8,10 @@ const PREMIUM_PASSWORD = process.env.EINTHUSAN_PASSWORD;
 
 let premiumSession = null;
 
-// --- THE FIX IS HERE (Part 1) ---
-// This function will be called once at server startup to warm up the auth system.
 async function initializeAuth() {
     console.log('[AUTH] Initializing authentication module...');
-    // We call getPremiumSession once to trigger the login and cache the session.
-    // We don't need to do anything with the result here.
+    // We call getPremiumSession once at startup to trigger the login and cache the session.
+    // This pre-warms the session before any user requests come in.
     await getPremiumSession();
     console.log('[AUTH] Authentication module ready.');
 }
@@ -23,7 +21,6 @@ function decodeEinth(lnk) {
     return lnk.slice(0, t) + lnk.slice(-1) + lnk.slice(t + 2, -1);
 }
 
-// Helper function to parse cookies safely
 function parseCookies(setCookieHeaders) {
     return setCookieHeaders.map(header => {
         const [pair] = header.split(';');
@@ -45,10 +42,13 @@ async function getPremiumSession() {
     let csrfToken = '';
 
     const crawler = new CheerioCrawler({
+        // --- THE FIX IS HERE ---
+        // The invalid `maxRequests: 1` property has been removed.
         useSessionPool: true,
-        sessionPoolOptions: { maxPoolSize: 1 },
+        sessionPoolOptions: {
+            maxPoolSize: 1,
+        },
         persistCookiesPerSession: true,
-        maxRequests: 1,
         async requestHandler({ $ }) {
             csrfToken = $('#login-form').attr('data-pageid');
         },
@@ -162,5 +162,4 @@ async function fetchStream(moviePageUrl, quality, session) {
     return streamInfo;
 }
 
-// --- THE FIX IS HERE (Part 2) ---
 module.exports = { initializeAuth, getStreamUrls };
