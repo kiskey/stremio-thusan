@@ -1,6 +1,6 @@
 // scraper.js
+const { CheerioCrawler } = require('crawlee');
 const fetch = require('node-fetch');
-const cheerio = require('cheerio');
 const { getStreamUrls } = require('./auth');
 
 const BASE_URL = process.env.BASE_URL || 'https://einthusan.tv';
@@ -31,8 +31,6 @@ async function scrapePage(lang, pageNum) {
 
     for (const proxyUrl of proxiesToTry) {
         const proxyIdentifier = proxyUrl || 'DIRECT';
-        console.log(`[SCRAPER] Attempting to fetch via proxy: ${proxyIdentifier}`);
-        
         try {
             let htmlContent;
             if (proxyUrl) {
@@ -47,7 +45,7 @@ async function scrapePage(lang, pageNum) {
                 htmlContent = await res.text();
             }
 
-            const $ = cheerio.load(htmlContent);
+            const $ = require('cheerio').load(htmlContent);
 
             if ($('title').text().includes('Rate Limited')) {
                 console.error(`[SCRAPER] Proxy ${proxyIdentifier} was RATE LIMITED. Rotating to next proxy.`);
