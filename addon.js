@@ -1,6 +1,6 @@
 // addon.js
 const { addonBuilder } = require('stremio-addon-sdk');
-const { getMoviesForCatalog, getMovieForMeta, getMovieByImdbId } = require('./database');
+const { getMoviesForCatalog, getMovieForMeta, getMovieByImdbId, searchMovies } = require('./database');
 const { getStreamUrls } = require('./auth');
 const { ID_PREFIX } = require('./scraper');
 
@@ -14,7 +14,7 @@ const LANGUAGES = [
 
 const manifest = {
     id: 'org.einthusan.stremio.db',
-    version: '4.0.0',
+    version: '4.1.0', // Version updated for search feature
     name: 'Einthusan (DB)',
     description: 'A persistent, database-backed addon for Einthusan with background scraping and TMDB enrichment.',
     resources: ['catalog', 'stream', 'meta'],
@@ -32,11 +32,22 @@ const builder = new addonBuilder(manifest);
 
 builder.defineCatalogHandler(async ({ type, id, extra }) => {
     const lang = id.replace('einthusan-', '');
-    const skip = parseInt(extra.skip || '0', 10);
-    const limit = 30;
-    
-    console.log(`[ADDON] Serving catalog for ${lang} from database (skip: ${skip})`);
-    const metas = await getMoviesForCatalog(lang, skip, limit);
+    const searchTerm = extra.search;
+
+    let metas = [];
+
+    if (searchTerm) {
+        // If a search term exists, use the search function
+        console.log(`[ADDON] Handling search request for "${searchTerm}" in ${lang}`);
+        metas = await searchMovies(lang, searchTerm);
+    } else {
+        // Otherwise, serve the standard catalog with pagination
+        const skip = parseInt(extra.skip || '0', 10);
+        const limit = 30;
+        console.log(`[ADDON] Serving catalog for ${lang} from database (skip: ${skip})`);
+        metas = await getMoviesForCatalog(lang, skip, limit);
+    }
+
     return { metas };
 });
 
