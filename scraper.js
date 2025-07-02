@@ -24,8 +24,6 @@ async function getMovies(lang, genre, searchQuery, skip = 0) {
     
     const crawler = new CheerioCrawler({
         maxConcurrency: 2,
-        minRequestDelay: 100,
-        maxRequestDelay: 500,
         async requestHandler({ $ }) {
             if ($('title').text().includes('Rate Limited')) {
                 log(`Got a rate-limit page for [${lang}]. Skipping.`, 'error');
@@ -61,7 +59,7 @@ async function getMovies(lang, genre, searchQuery, skip = 0) {
 
     await crawler.run([finalUrl]);
     log(`Scraping finished for [${lang}]. Returning ${movies.length} movies.`);
-    return { movies, rateLimited: false }; // Assuming no rate limit for now
+    return { movies, rateLimited: false };
 }
 
 async function getStreamUrls(moviePageUrl) {
@@ -69,7 +67,6 @@ async function getStreamUrls(moviePageUrl) {
     const streams = [];
     const session = await getPremiumSession();
     
-    // Placeholder for stream fetching logic
     if (session) {
         log('[STREAMER] Logged in. HD stream fetching would be implemented here.');
     } else {
@@ -79,4 +76,9 @@ async function getStreamUrls(moviePageUrl) {
     return streams;
 }
 
-module.exports = { scrapePage: getMovies, getStreamUrls };
+module.exports = { 
+    // --- FIX: Exporting ID_PREFIX ---
+    scrapePage: getMovies, 
+    getStreamUrls,
+    ID_PREFIX
+};
