@@ -4,7 +4,6 @@ const { upsertMovie, getScrapeProgress, updateScrapeProgress } = require('./data
 
 const LANGUAGES = ['tamil', 'hindi', 'telugu', 'malayalam', 'kannada'];
 const MAX_PAGES_TO_SCRAPE = parseInt(process.env.MAX_PAGES_TO_SCRAPE || '500', 10);
-const BASE_URL = process.env.BASE_URL || 'https://einthusan.tv';
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -13,19 +12,19 @@ function sleep(ms) {
 async function scrapeLanguage(lang, startPage, maxPage) {
     console.log(`[WORKER] Starting job for lang: ${lang}, from page ${startPage} to ${maxPage}.`);
     for (let page = startPage; page <= maxPage; page++) {
+        // The new scrapePage function handles proxy rotation internally
         const { movies, rateLimited } = await scrapePage(lang, page);
 
         if (rateLimited) {
             const delay = Math.random() * 20000 + 10000; // 10s to 30s
-            console.log(`[WORKER] Rate limited. Pausing for ${Math.round(delay / 1000)} seconds...`);
+            console.log(`[WORKER] All proxies failed for page ${page}. Pausing for ${Math.round(delay / 1000)} seconds...`);
             await sleep(delay);
-            page--; // Decrement to retry the same page
+            page--; // Decrement to retry the same page after the long pause
             continue;
         }
 
         if (movies.length === 0 && page > 1) {
             console.log(`[WORKER] No movies found on page ${page} for ${lang}. Assuming end of list for this run.`);
-            // Mark the full scrape as "done" by setting progress to the max, so it doesn't retry until config changes.
             await updateScrapeProgress(lang, maxPage);
             break;
         }
@@ -34,11 +33,10 @@ async function scrapeLanguage(lang, startPage, maxPage) {
             await upsertMovie(movie);
         }
 
-        // Update progress after each successful page scrape
         await updateScrapeProgress(lang, page);
         console.log(`[WORKER] Successfully scraped page ${page} for ${lang}. Progress saved.`);
 
-        const politeDelay = Math.random() * 1500 + 500; // 0.5s to 2s
+        const politeDelay = Math.random() * 1500 + 500;
         await sleep(politeDelay);
     }
     console.log(`[WORKER] Finished job for language: ${lang}`);
@@ -61,14 +59,13 @@ async function runInitialScrape() {
 async function runPeriodicUpdate() {
     console.log('[WORKER] Checking for new releases (first 2 pages)...');
     for (const lang of LANGUAGES) {
-        // This job is simple: just scrape the first two pages regardless of past progress.
         await scrapeLanguage(lang, 1, 2); 
     }
     console.log('[WORKER] Periodic update completed.');
 }
 
 async function startWorker() {
-    // On startup, always check if the full scrape needs to be run or continued.
+    // Check if the full scrape needs to be run or continued.
     await runInitialScrape();
 
     // After the initial check, schedule periodic updates every 3 hours.
