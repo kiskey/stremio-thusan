@@ -13,22 +13,15 @@ const client = wrapper(axios.create({ jar }));
 
 let isAuthenticated = false;
 
-// --- THE FIX IS HERE (Part 1): The IP Replacement Function ---
 function replaceIpInStreamUrl(streamInfo) {
-    if (!streamInfo || !streamInfo.url) {
-        return streamInfo; // Return as-is if there's no URL
-    }
-    // This regex finds an IP address at the start of a URL, following http(s)://
+    if (!streamInfo || !streamInfo.url) return streamInfo;
     const ipRegex = /https?:\/\/\b(?:\d{1,3}\.){3}\d{1,3}\b/;
     const replacementDomain = 'https://cdn1.einthusan.io';
-    
     const originalUrl = streamInfo.url;
     streamInfo.url = originalUrl.replace(ipRegex, replacementDomain);
-
     if (originalUrl !== streamInfo.url) {
         console.log(`[STREAMER] Replaced IP in stream URL. New URL: ${streamInfo.url}`);
     }
-    
     return streamInfo;
 }
 
@@ -44,9 +37,7 @@ async function initializeAuth() {
 }
 
 async function getAuthenticatedClient() {
-    if (isAuthenticated) {
-        return client;
-    }
+    if (isAuthenticated) return client;
     if (!PREMIUM_USERNAME || !PREMIUM_PASSWORD) {
         console.log('[AUTH] No premium credentials. Using a non-logged-in client.');
         return client;
@@ -56,7 +47,7 @@ async function getAuthenticatedClient() {
     try {
         const loginPageRes = await client.get(`${BASE_URL}/login/`);
         const $ = cheerio.load(loginPageRes.data);
-        const csrfToken = $('html').attr('data-pageid')?.replace(/\+/g, '+');
+        const csrfToken = $('html').attr('data-pageid')?.replace(/+/g, '+');
 
         if (!csrfToken) throw new Error('Could not find CSRF token on the login page.');
         console.log('[AUTH] Successfully retrieved CSRF token.');
@@ -108,14 +99,20 @@ async function fetchStream(client, moviePageUrl, quality) {
         const $ = cheerio.load(pageResponse.data);
 
         const videoPlayerSection = $('#UIVideoPlayer');
-        const ejp = videoPlayerSection.attr('data-ejpingables');
-        const hlsLink = videoPlayerSection.attr('data-hls-link');
-        const csrfToken = $('html').attr('data-pageid')?.replace(/\+/g, '+');
-
-        if (hlsLink) {
-            console.log(`[STREAMER] Successfully found direct HLS link for ${quality}.`);
-            return { title: `Einthusan ${quality}`, url: hlsLink };
+        
+        // --- THE DEFINITIVE FIX IS HERE ---
+        // We now prioritize 'data-mp4-link' exactly like the working script.
+        const mp4Link = videoPlayerSection.attr('data-mp4-link');
+        
+        if (mp4Link) {
+            console.log(`[STREAMER] Successfully found direct MP4 link for ${quality}.`);
+            return { title: `Einthusan ${quality}`, url: mp4Link };
         }
+
+        // Fallback to the AJAX method only if the direct link is not present.
+        console.log(`[STREAMER] No direct MP4 link found. Falling back to AJAX method for ${quality}.`);
+        const ejp = videoPlayerSection.attr('data-ejpingables');
+        const csrfToken = $('html').attr('data-pageid')?.replace(/+/g, '+');
 
         if (!ejp || !csrfToken) {
             console.error(`[STREAMER] Could not find AJAX tokens for ${quality} stream.`);
@@ -140,6 +137,7 @@ async function fetchStream(client, moviePageUrl, quality) {
             const streamData = JSON.parse(decodedLnk);
             if (streamData.HLSLink) {
                 console.log(`[STREAMER] Successfully found AJAX HLS link for ${quality}.`);
+                // Note: The AJAX method seems to return an HLS link. We will use it as a last resort.
                 return { title: `Einthusan ${quality} (AJAX)`, url: streamData.HLSLink };
             }
         }
@@ -156,14 +154,12 @@ async function getStreamUrls(moviePageUrl) {
     if (isAuthenticated) {
         let hdStream = await fetchStream(client, moviePageUrl, 'HD');
         if (hdStream) {
-            // --- THE FIX IS HERE (Part 2): Applying the replacement ---
             streams.push(replaceIpInStreamUrl(hdStream));
         }
     }
     
     let sdStream = await fetchStream(client, moviePageUrl, 'SD');
     if (sdStream) {
-        // --- THE FIX IS HERE (Part 2): Applying the replacement ---
         sdStream = replaceIpInStreamUrl(sdStream);
         if (!streams.find(s => s.url === sdStream.url)) {
             streams.push(sdStream);
