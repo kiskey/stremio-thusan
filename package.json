@@ -1,6 +1,6 @@
 {
   "name": "stremio-einthusan-addon",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "A persistent, database-backed Stremio addon for Einthusan with background scraping.",
   "main": "server.js",
   "scripts": {
