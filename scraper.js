@@ -1,24 +1,60 @@
 // scraper.js
-const { CheerioCrawler } = require('crawlee');
+const fetch = require('node-fetch');
 const cheerio = require('cheerio');
-const { getAuthenticatedClient, decodeEinth, isClientAuthenticated } = require('./auth');
+const { getStreamUrls } = require('./auth');
 
 const BASE_URL = process.env.BASE_URL || 'https://einthusan.tv';
 const ID_PREFIX = 'ein';
 
+const PROXY_URLS = (process.env.PROXY_URLS || '').split(',').map(url => url.trim()).filter(Boolean);
+
+if (PROXY_URLS.length > 0) {
+    console.log(`[SCRAPER] Loaded ${PROXY_URLS.length} proxies for rotation.`);
+} else {
+    console.log('[SCRAPER] No proxies configured. Worker will make direct requests.');
+}
+
+function shuffleProxies() {
+    const shuffled = [...PROXY_URLS];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled;
+}
+
 async function scrapePage(lang, pageNum) {
     const finalUrl = `${BASE_URL}/movie/results/?find=Recent&lang=${lang}&page=${pageNum}`;
-    const movies = [];
-    let rateLimited = false;
+    console.log(`[SCRAPER] Beginning scrape job for: ${finalUrl}`);
 
-    const crawler = new CheerioCrawler({
-        maxConcurrency: 2,
-        async requestHandler({ $ }) {
-            if ($('title').text().includes('Rate Limited')) {
-                console.error(`[SCRAPER] Got a rate-limit page for [${lang}].`);
-                rateLimited = true;
-                return;
+    const proxiesToTry = PROXY_URLS.length > 0 ? shuffleProxies() : [null];
+
+    for (const proxyUrl of proxiesToTry) {
+        const proxyIdentifier = proxyUrl || 'DIRECT';
+        console.log(`[SCRAPER] Attempting to fetch via proxy: ${proxyIdentifier}`);
+        
+        try {
+            let htmlContent;
+            if (proxyUrl) {
+                const res = await fetch(proxyUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pageURL: finalUrl })
+                });
+                htmlContent = await res.text();
+            } else {
+                const res = await fetch(finalUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36' }});
+                htmlContent = await res.text();
             }
+
+            const $ = cheerio.load(htmlContent);
+
+            if ($('title').text().includes('Rate Limited')) {
+                console.error(`[SCRAPER] Proxy ${proxyIdentifier} was RATE LIMITED. Rotating to next proxy.`);
+                continue;
+            }
+
+            const movies = [];
             $('#UIMovieSummary > ul > li').each((i, el) => {
                 const listItem = $(el);
                 const title = listItem.find('.block2 h3').text().trim();
@@ -41,86 +77,18 @@ async function scrapePage(lang, pageNum) {
                     }
                 }
             });
+            
+            console.log(`[SCRAPER] SUCCESS via ${proxyIdentifier}. Found ${movies.length} movies.`);
+            return { movies, rateLimited: false };
+
+        } catch (error) {
+            console.error(`[SCRAPER] Proxy ${proxyIdentifier} FAILED: ${error.message}. Rotating to next proxy.`);
+            continue;
         }
-    });
-
-    await crawler.run([finalUrl]);
-    return { movies, rateLimited };
-}
-
-async function fetchStream(client, moviePageUrl, quality) {
-    console.log(`[STREAMER] Attempting to fetch ${quality} stream from: ${moviePageUrl}`);
-    
-    // As per your evidence, premium URLs have a /premium/ prefix
-    const usePremiumUrl = quality === 'HD' && isClientAuthenticated();
-    const urlToVisit = usePremiumUrl ? moviePageUrl.replace('/movie/', '/premium/movie/') : moviePageUrl;
-    console.log(`[STREAMER] Visiting URL: ${urlToVisit}`);
-
-    try {
-        const pageResponse = await client.get(urlToVisit);
-        const $ = cheerio.load(pageResponse.data);
-
-        const videoPlayerSection = $('#UIVideoPlayer');
-        const ejp = videoPlayerSection.attr('data-ejpingables');
-        const hlsLink = videoPlayerSection.attr('data-hls-link');
-        const csrfToken = $('html').attr('data-pageid')?.replace(/\+/g, '+');
-
-        // The working script shows a direct link is often available for logged-in users
-        if (hlsLink) {
-            console.log(`[STREAMER] Successfully found direct HLS link for ${quality}.`);
-            return { title: `Einthusan ${quality}`, url: hlsLink };
-        }
-
-        // Fallback to the AJAX method if no direct link is found
-        if (!ejp || !csrfToken) {
-            console.error(`[STREAMER] Could not find tokens for ${quality} stream.`);
-            return null;
-        }
-
-        const movieId = new URL(moviePageUrl).pathname.split('/')[3];
-        const lang = new URL(moviePageUrl).searchParams.get('lang');
-        const ajaxUrl = `${BASE_URL}/ajax/movie/watch/${movieId}/?lang=${lang}`;
-        const postData = new URLSearchParams({
-            'xEvent': 'UIVideoPlayer.PingOutcome',
-            'xJson': JSON.stringify({ "EJOutcomes": ejp, "NativeHLS": false }),
-            'gorilla.csrf.Token': csrfToken,
-        }).toString();
-
-        const ajaxResponse = await client.post(ajaxUrl, postData, {
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest', 'Referer': urlToVisit }
-        });
-
-        if (ajaxResponse.data?.Data?.EJLinks) {
-            const decodedLnk = Buffer.from(decodeEinth(ajaxResponse.data.Data.EJLinks), 'base64').toString('utf-8');
-            const streamData = JSON.parse(decodedLnk);
-            if (streamData.HLSLink) {
-                console.log(`[STREAMER] Successfully found AJAX HLS link for ${quality}.`);
-                return { title: `Einthusan ${quality} (AJAX)`, url: streamData.HLSLink };
-            }
-        }
-    } catch (error) {
-        console.error(`[STREAMER] Request for ${quality} stream failed: ${error.message}`);
-    }
-    return null;
-}
-
-async function getStreamUrls(moviePageUrl) {
-    const streams = [];
-    const client = getAuthenticatedClient(); // Get the single, shared client
-
-    // Try for HD first if authenticated
-    if (isClientAuthenticated()) {
-        const hdStream = await fetchStream(client, moviePageUrl, 'HD');
-        if (hdStream) streams.push(hdStream);
-    }
-    
-    // Always try for SD as a fallback
-    const sdStream = await fetchStream(client, moviePageUrl, 'SD');
-    if (sdStream && !streams.find(s => s.url === sdStream.url)) {
-        streams.push(sdStream);
     }
 
-    return streams;
+    console.error(`[SCRAPER] All proxies failed for ${finalUrl}. Signaling worker to pause.`);
+    return { movies: [], rateLimited: true };
 }
 
 module.exports = { 
