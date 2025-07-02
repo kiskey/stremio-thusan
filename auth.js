@@ -25,7 +25,7 @@ async function getPremiumSession() {
     console.log('[AUTH] Attempting premium login...');
     
     // --- FIX #1: Correctly instantiate Session as per your recommendation ---
-    const loginSession = new Session();
+    const loginSession = new Session({});
 
     let csrfToken = '';
 
@@ -87,7 +87,7 @@ async function getStreamUrls(moviePageUrl) {
     console.log('[STREAMER] Executing standard SD stream search (fallback)...');
     
     // --- FIX #1 (Applied here as well): Correctly instantiate Session ---
-    const sdStream = await fetchStream(moviePageUrl, 'SD', new Session()); 
+    const sdStream = await fetchStream(moviePageUrl, 'SD', new Session({})); 
 
     if (sdStream) {
         // Avoid adding duplicate SD streams if HD failed but we are logged in
@@ -108,7 +108,7 @@ async function fetchStream(moviePageUrl, quality, session) {
         async requestHandler({ $ }) {
             const videoPlayerSection = $('#UIVideoPlayer');
             const ejp = videoPlayerSection.attr('data-ejpingables');
-            const csrfToken = $('html').attr('data-pageid')?.replace(/\+/g, '+');
+            const csrfToken = $('html').attr('data-pageid')?.replace(/+/g, '+');
 
             if (!ejp || !csrfToken) {
                 console.error(`[STREAMER] Could not find tokens for ${quality} stream.`);
