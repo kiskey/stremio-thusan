@@ -1,19 +1,54 @@
 // database.js
-const { Pool } = require('pg');
+const { Pool, Client } = require('pg');
 
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-});
+// This will be our main application pool, connecting to the addon's specific database.
+// It is initialized as null and will be created by initializeDatabase.
+let pool = null;
 
+const ADDON_DB_NAME = 'stremio_addons';
 const SCHEMA_NAME = 'einthusan';
 
 async function initializeDatabase() {
-    const client = await pool.connect();
+    const adminUrl = process.env.DATABASE_URL;
+    if (!adminUrl) {
+        throw new Error('DATABASE_URL environment variable is not set.');
+    }
+
+    // --- Stage 1: Ensure the addon's database exists ---
+    const adminClient = new Client({ connectionString: adminUrl });
     try {
-        await client.query(`CREATE SCHEMA IF NOT EXISTS ${SCHEMA_NAME}`);
+        await adminClient.connect();
+        console.log(`[DB] Connected to 'postgres' database to check for '${ADDON_DB_NAME}'.`);
+
+        const res = await adminClient.query(`SELECT 1 FROM pg_database WHERE datname = $1`, [ADDON_DB_NAME]);
+        if (res.rowCount === 0) {
+            console.log(`[DB] Database '${ADDON_DB_NAME}' does not exist. Creating...`);
+            await adminClient.query(`CREATE DATABASE ${ADDON_DB_NAME}`);
+            console.log(`[DB] Successfully created database '${ADDON_DB_NAME}'.`);
+        } else {
+            console.log(`[DB] Database '${ADDON_DB_NAME}' already exists.`);
+        }
+    } catch (err) {
+        console.error('[DB] Error during database creation check:', err);
+        throw err;
+    } finally {
+        await adminClient.end();
+        console.log(`[DB] Disconnected from 'postgres' database.`);
+    }
+
+    // --- Stage 2: Connect to the addon's database and set up schema/tables ---
+    const appDbUrl = new URL(adminUrl);
+    appDbUrl.pathname = `/${ADDON_DB_NAME}`;
+    
+    pool = new Pool({ connectionString: appDbUrl.toString() });
+    console.log(`[DB] Main connection pool created for '${ADDON_DB_NAME}'.`);
+
+    const appClient = await pool.connect();
+    try {
+        await appClient.query(`CREATE SCHEMA IF NOT EXISTS ${SCHEMA_NAME}`);
         console.log(`[DB] Schema '${SCHEMA_NAME}' is ready.`);
 
-        await client.query(`
+        await appClient.query(`
             CREATE TABLE IF NOT EXISTS ${SCHEMA_NAME}.movies (
                 id VARCHAR(255) PRIMARY KEY,
                 lang VARCHAR(50),
@@ -26,12 +61,11 @@ async function initializeDatabase() {
             );
         `);
         console.log(`[DB] Table '${SCHEMA_NAME}.movies' is ready.`);
-
     } catch (err) {
-        console.error('[DB] Error during database initialization:', err);
+        console.error('[DB] Error during schema/table initialization:', err);
         throw err;
     } finally {
-        client.release();
+        appClient.release();
     }
 }
 
