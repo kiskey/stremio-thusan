@@ -1,60 +1,72 @@
 // worker.js
 const { scrapePage } = require('./scraper');
-const { upsertMovie } = require('./database');
+const { upsertMovie, getMovieCount } = require('./database');
 
 const LANGUAGES = ['tamil', 'hindi', 'telugu', 'malayalam', 'kannada'];
-const TOTAL_PAGES_PER_LANG = 500; // A reasonable estimate
+const MAX_PAGES_TO_SCRAPE = parseInt(process.env.MAX_PAGES_TO_SCRAPE || '500', 10);
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function scrapeAllLanguages() {
-    console.log('[WORKER] Starting full scrape of all languages...');
-    for (const lang of LANGUAGES) {
-        console.log(`[WORKER] Starting scrape for language: ${lang}`);
-        for (let page = 1; page <= TOTAL_PAGES_PER_LANG; page++) {
-            const url = `https://einthusan.tv/movie/results/?find=Recent&lang=${lang}&page=${page}`;
-            const { movies, rateLimited } = await scrapePage(url);
+async function scrapeLanguage(lang, maxPages) {
+    console.log(`[WORKER] Starting scrape for language: ${lang}, up to ${maxPages} pages.`);
+    for (let page = 1; page <= maxPages; page++) {
+        const url = `${BASE_URL}/movie/results/?find=Recent&lang=${lang}&page=${page}`;
+        const { movies, rateLimited } = await scrapePage(url);
 
-            if (rateLimited) {
-                console.log('[WORKER] Rate limited. Pausing for 60 seconds...');
-                await sleep(60000);
-                page--; // Retry the same page after the pause
-                continue;
-            }
-
-            if (movies.length === 0) {
-                console.log(`[WORKER] No movies found on page ${page} for ${lang}. Assuming end of list.`);
-                break; // Stop scraping this language if a page is empty
-            }
-
-            for (const movie of movies) {
-                await upsertMovie(movie);
-            }
-
-            // Polite random delay
-            const delay = Math.random() * 2000 + 500; // 0.5s to 2.5s
+        if (rateLimited) {
+            const delay = Math.random() * 20000 + 10000; // 10s to 30s
+            console.log(`[WORKER] Rate limited. Pausing for ${Math.round(delay / 1000)} seconds...`);
             await sleep(delay);
+            page--; // Decrement to retry the same page
+            continue;
         }
-        console.log(`[WORKER] Finished scrape for language: ${lang}`);
+
+        if (movies.length === 0 && page > 1) { // Allow page 1 to be empty without stopping
+            console.log(`[WORKER] No movies found on page ${page} for ${lang}. Assuming end of list.`);
+            break;
+        }
+
+        for (const movie of movies) {
+            await upsertMovie(movie);
+        }
+
+        const politeDelay = Math.random() * 1500 + 500; // 0.5s to 2s
+        await sleep(politeDelay);
     }
-    console.log('[WORKER] Full scrape completed.');
+    console.log(`[WORKER] Finished scrape for language: ${lang}`);
 }
 
-async function checkForUpdates() {
-    console.log('[WORKER] Checking for new releases (Page 1 of all languages)...');
-    // This function would be similar to scrapeAllLanguages but only ever scrapes page=1
-    // It can be run on a more frequent schedule.
+async function runInitialScrape() {
+    console.log('[WORKER] Starting initial full scrape of all languages...');
+    for (const lang of LANGUAGES) {
+        await scrapeLanguage(lang, MAX_PAGES_TO_SCRAPE);
+    }
+    console.log('[WORKER] Initial full scrape completed.');
 }
 
-function startWorker() {
-    // Initial full scrape
-    scrapeAllLanguages();
+async function runPeriodicUpdate() {
+    console.log('[WORKER] Checking for new releases (first 2 pages)...');
+    for (const lang of LANGUAGES) {
+        await scrapeLanguage(lang, 2); // Only scrape first 2 pages
+    }
+    console.log('[WORKER] Periodic update completed.');
+}
 
-    // Schedule periodic checks
-    setInterval(checkForUpdates, 60 * 60 * 1000); // Check for updates every hour
-    setInterval(scrapeAllLanguages, 24 * 60 * 60 * 1000); // Do a full re-scrape once a day
+async function startWorker() {
+    const movieCount = await getMovieCount();
+    if (movieCount < 100) { // If DB is empty or has very few items
+        await runInitialScrape();
+    } else {
+        console.log('[WORKER] Database already populated. Skipping initial full scrape.');
+        await runPeriodicUpdate(); // Run an update immediately on start
+    }
+
+    // Schedule periodic checks every 3 hours
+    const threeHours = 3 * 60 * 60 * 1000;
+    setInterval(runPeriodicUpdate, threeHours);
+    console.log(`[WORKER] Scheduled periodic updates to run every 3 hours.`);
 }
 
 module.exports = { startWorker };
