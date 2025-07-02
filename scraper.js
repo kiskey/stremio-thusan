@@ -25,13 +25,10 @@ function decodeEinth(lnk) {
 }
 
 async function getPremiumSession() {
-    // If we already have a valid, cached session, return it.
     if (premiumSession && !premiumSession.isBlocked()) {
         log('Using cached premium session.');
         return premiumSession;
     }
-
-    // If no credentials are in .env, don't even try.
     if (!PREMIUM_USERNAME || !PREMIUM_PASSWORD) {
         log('No premium credentials provided. Proceeding as free user.');
         return null;
@@ -72,13 +69,12 @@ async function getPremiumSession() {
             log('Premium login successful!');
             const cookies = loginResponse.headers['set-cookie'];
             if (cookies) {
-                // Manually construct cookies for the session object
                 const sessionCookies = cookies.map(c => {
                     const [name, ...valueParts] = c.split(';')[0].split('=');
                     return { name, value: valueParts.join('=') };
                 });
                 loginSession.setCookies(sessionCookies, loginUrl);
-                premiumSession = loginSession; // Cache the successful session
+                premiumSession = loginSession;
                 return premiumSession;
             }
         } else {
@@ -111,6 +107,9 @@ async function fetchStream(stremioId, quality, session) {
             const csrfMatch = rootHtml.match(/data-pageid="([^"]+)"/);
             
             const ejp = ejpMatch ? ejpMatch[1] : null;
+
+            // --- THE FIX IS HERE ---
+            // The invalid regex /+/g has been corrected to look for the HTML entity '+'
             const csrfToken = csrfMatch ? csrfMatch[1].replace(/+/g, '+') : null;
 
             if (!ejp || !csrfToken) {
@@ -131,7 +130,7 @@ async function fetchStream(stremioId, quality, session) {
                         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
                         'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
                         'X-Requested-With': 'XMLHttpRequest', 'Referer': watchUrl,
-                        'Cookie': session.getCookieString(watchUrl), // Use the session's cookies
+                        'Cookie': session.getCookieString(watchUrl),
                     }
                 });
                 if (ajaxResponse.data?.Data?.EJLinks) {
@@ -173,7 +172,6 @@ async function getStreamUrls(stremioId) {
     return streams;
 }
 
-// --- The working getMovies and getMovieMeta functions from before ---
 async function getMovies(lang, genre, searchQuery, skip = 0) {
     const pageNum = Math.floor(skip / 20) + 1;
     const finalUrl = `${BASE_URL}/movie/results/?lang=${lang}&${searchQuery ? `query=${encodeURIComponent(searchQuery)}` : `find=${genre || 'Recent'}`}&page=${pageNum}`;
