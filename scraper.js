@@ -1,6 +1,8 @@
 // scraper.js
 const { CheerioCrawler, Session } = require('crawlee');
 const axios = require('axios');
+// --- THE FIX IS HERE ---
+// We now correctly import the functions from the auth.js module.
 const { getPremiumSession, decodeEinth } = require('./auth');
 
 const BASE_URL = process.env.BASE_URL || 'https://einthusan.tv';
@@ -47,6 +49,8 @@ async function scrapePage(lang, pageNum) {
                             poster: poster && !poster.startsWith('http') ? `https:${poster}` : poster,
                             movie_page_url: `${BASE_URL}${href}`,
                             description: listItem.find('p.synopsis').text().trim(),
+                            director: listItem.find('.professionals .prof:contains("Director") p').text().trim() || null,
+                            cast: listItem.find('.professionals .prof:not(:contains("Director")) p').map((i, el) => $(el).text().trim()).get(),
                         });
                     }
                 }
@@ -58,7 +62,6 @@ async function scrapePage(lang, pageNum) {
     return { movies, rateLimited };
 }
 
-
 async function fetchStream(moviePageUrl, quality, session) {
     log(`Attempting to fetch ${quality} stream from: ${moviePageUrl}`);
     let streamInfo = null;
@@ -66,20 +69,18 @@ async function fetchStream(moviePageUrl, quality, session) {
 
     const crawler = new CheerioCrawler({
         async requestHandler({ $ }) {
-            const videoPlayerHtml = $('#UIVideoPlayer').toString();
-            const rootHtml = $('html').toString();
-            const ejpMatch = videoPlayerHtml.match(/data-ejpingables="([^"]+)"/);
-            const csrfMatch = rootHtml.match(/data-pageid="([^"]+)"/);
-            
-            const ejp = ejpMatch ? ejpMatch[1] : null;
-            const csrfToken = csrfMatch ? csrfMatch[1].replace(/\+/g, '+') : null;
+            const videoPlayerSection = $('#UIVideoPlayer');
+            const ejp = videoPlayerSection.attr('data-ejpingables');
+            const csrfToken = $('html').attr('data-pageid')?.replace(/+/g, '+');
 
             if (!ejp || !csrfToken) {
                 log(`Could not find tokens for ${quality} stream.`, 'error');
                 return;
             }
 
-            const ajaxUrl = `${BASE_URL}/ajax${new URL(moviePageUrl).pathname}${new URL(moviePageUrl).search}`;
+            const movieId = new URL(moviePageUrl).pathname.split('/')[3];
+            const lang = new URL(moviePageUrl).searchParams.get('lang');
+            const ajaxUrl = `${BASE_URL}/ajax/movie/watch/${movieId}/?lang=${lang}`;
             const postData = new URLSearchParams({
                 'xEvent': 'UIVideoPlayer.PingOutcome',
                 'xJson': JSON.stringify({ "EJOutcomes": ejp, "NativeHLS": false }),
@@ -137,5 +138,5 @@ async function getStreamUrls(moviePageUrl) {
 module.exports = { 
     scrapePage, 
     getStreamUrls,
-    ID_PREFIX
+    ID_PREFIX // Ensure this is exported for addon.js
 };
