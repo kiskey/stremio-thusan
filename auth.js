@@ -1,19 +1,14 @@
 // auth.js
 const axios = require('axios');
-// We now correctly import SessionPool
-const { CheerioCrawler, SessionPool } = require('crawlee');
+const { CheerioCrawler, SessionPool, Session } = require('crawlee');
 
 const BASE_URL = process.env.BASE_URL || 'https://einthusan.tv';
 const PREMIUM_USERNAME = process.env.EINTHUSAN_USERNAME;
 const PREMIUM_PASSWORD = process.env.EINTHUSAN_PASSWORD;
 
-// --- THE FIX IS HERE: A real SessionPool as you recommended ---
-// A single-session pool just for our premium login.
-const loginPool = new SessionPool({
-  maxPoolSize: 1,
-  isSessionUsable: async (session) => !session.isBlocked(),
-});
-
+// --- THE FIX IS HERE: A real SessionPool as you correctly diagnosed ---
+// This pool is created with a valid, empty options object.
+const loginPool = new SessionPool({});
 let premiumSessionIsAuthenticated = false;
 
 function decodeEinth(lnk) {
@@ -22,27 +17,28 @@ function decodeEinth(lnk) {
 }
 
 async function getPremiumSession() {
-    // If we already logged in once, the session in the pool is good to go.
     if (premiumSessionIsAuthenticated) {
         console.log('[AUTH] Using cached premium session from pool.');
-        return loginPool.sessions[0];
+        const session = await loginPool.getSession();
+        return session;
     }
     if (!PREMIUM_USERNAME || !PREMIUM_PASSWORD) {
         return null;
     }
 
     console.log('[AUTH] Attempting premium login...');
-
+    const session = await loginPool.getSession();
     let csrfToken = '';
+
     const crawler = new CheerioCrawler({
-        sessionPool: loginPool, // Use our dedicated pool
+        sessionPool: loginPool,
         maxRequests: 1,
         async requestHandler({ $ }) {
             csrfToken = $('#login-form').attr('data-pageid');
         }
     });
 
-    await crawler.run([{ url: `${BASE_URL}/login/` }]);
+    await crawler.run([{ url: `${BASE_URL}/login/`, session: session }]);
 
     if (!csrfToken) {
         console.error('[AUTH] Could not find CSRF token.');
@@ -61,7 +57,7 @@ async function getPremiumSession() {
         });
 
         if (loginResponse.data?.Message !== 'success') {
-            console.error('[AUTH] Login failed, server did not return success. Please check credentials.');
+            console.error('[AUTH] Login failed, bad credentials.');
             return null;
         }
 
@@ -73,37 +69,14 @@ async function getPremiumSession() {
             return { name: name.trim(), value: vals.join('=') };
         });
         
-        // There is only one session in our loginPool. Set the cookies on it.
-        loginPool.sessions[0].setCookies(cookies, `${BASE_URL}/`);
-        premiumSessionIsAuthenticated = true; // Mark our session as authenticated
-        return loginPool.sessions[0];
+        session.setCookies(cookies, `${BASE_URL}/`);
+        premiumSessionIsAuthenticated = true;
+        return session;
 
     } catch (error) {
         console.error(`[AUTH] An error occurred during the login AJAX request: ${error.message}`);
         return null;
     }
-}
-
-async function getStreamUrls(moviePageUrl) {
-    const streams = [];
-    const premiumSession = await getPremiumSession();
-
-    if (premiumSession) {
-        console.log('[STREAMER] Fetching HD via premium session…');
-        const hdStream = await fetchStream(moviePageUrl, 'HD', premiumSession);
-        if (hdStream) streams.push(hdStream);
-    }
-
-    console.log('[STREAMER] Falling back to SD (no login)…');
-    // As you recommended, we create a new, temporary pool for the SD session.
-    const sdPool = new SessionPool({ maxPoolSize: 1 });
-    const sdSession = await sdPool.getSession();
-    const sdStream = await fetchStream(moviePageUrl, 'SD', sdSession);
-    if (sdStream && !streams.find(s => s.url === sdStream.url)) {
-        streams.push(sdStream);
-    }
-
-    return streams;
 }
 
 async function fetchStream(moviePageUrl, quality, session) {
@@ -115,7 +88,7 @@ async function fetchStream(moviePageUrl, quality, session) {
         async requestHandler({ $ }) {
             const videoPlayerSection = $('#UIVideoPlayer');
             const ejp = videoPlayerSection.attr('data-ejpingables');
-            const csrfToken = $('html').attr('data-pageid')?.replace(/\+/g, '+');
+            const csrfToken = $('html').attr('data-pageid')?.replace(/+/g, '+');
 
             if (!ejp || !csrfToken) {
                 console.error(`[STREAMER] Could not find tokens for ${quality} stream.`);
@@ -156,6 +129,26 @@ async function fetchStream(moviePageUrl, quality, session) {
 
     await crawler.run([{ url: urlToVisit, session: session }]);
     return streamInfo;
+}
+
+async function getStreamUrls(moviePageUrl) {
+    const streams = [];
+    const premiumSession = await getPremiumSession();
+
+    if (premiumSession) {
+        console.log('[STREAMER] Fetching HD via premium session…');
+        const hdStream = await fetchStream(moviePageUrl, 'HD', premiumSession);
+        if (hdStream) streams.push(hdStream);
+    }
+
+    console.log('[STREAMER] Falling back to SD (no login)…');
+    const sdSession = new Session({});
+    const sdStream = await fetchStream(moviePageUrl, 'SD', sdSession);
+    if (sdStream && !streams.find(s => s.url === sdStream.url)) {
+        streams.push(sdStream);
+    }
+
+    return streams;
 }
 
 module.exports = { getStreamUrls };
