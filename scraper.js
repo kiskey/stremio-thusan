@@ -1,36 +1,67 @@
 // scraper.js
-const { CheerioCrawler, Session } = require('crawlee');
-const axios = require('axios');
-// --- THE FIX IS HERE ---
-// We now correctly import the functions from the auth.js module.
-const { getPremiumSession, decodeEinth } = require('./auth');
+const fetch = require('node-fetch');
+const cheerio = require('cheerio');
+const { getStreamUrls } = require('./auth'); // Still needed for on-demand streams
 
 const BASE_URL = process.env.BASE_URL || 'https://einthusan.tv';
 const ID_PREFIX = 'ein';
-const PROXY_URL = process.env.PROXY_URL;
 
-const IS_DEBUG_MODE = process.env.LOG_LEVEL === 'debug';
+// --- NEW: Proxy Rotation Logic ---
+const PROXY_URLS = (process.env.PROXY_URLS || '')
+    .split(',')
+    .map(url => url.trim())
+    .filter(url => url.length > 0);
 
-function log(message, level = 'info') {
-    if (IS_DEBUG_MODE || level === 'error') {
-        console.log(`[SCRAPER][${level.toUpperCase()}] ${message}`);
+if (PROXY_URLS.length > 0) {
+    console.log(`[SCRAPER] Loaded ${PROXY_URLS.length} proxies for rotation.`);
+} else {
+    console.log('[SCRAPER] No proxies configured. Will make direct requests.');
+}
+
+// Helper function to shuffle the proxy array for each page request
+function shuffleProxies() {
+    // Return a new shuffled array
+    const shuffled = [...PROXY_URLS];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
     }
+    return shuffled;
 }
 
 async function scrapePage(lang, pageNum) {
     const finalUrl = `${BASE_URL}/movie/results/?find=Recent&lang=${lang}&page=${pageNum}`;
-    log(`Scraping page: ${finalUrl}`);
-    const movies = [];
-    let rateLimited = false;
+    console.log(`[SCRAPER] Beginning scrape job for: ${finalUrl}`);
 
-    const crawler = new CheerioCrawler({
-        maxConcurrency: 2,
-        async requestHandler({ $ }) {
-            if ($('title').text().includes('Rate Limited')) {
-                log(`Got a rate-limit page for [${lang}].`, 'error');
-                rateLimited = true;
-                return;
+    // If no proxies are configured, add a 'null' entry to represent a direct connection.
+    const proxiesToTry = PROXY_URLS.length > 0 ? shuffleProxies() : [null];
+
+    for (const proxyUrl of proxiesToTry) {
+        const proxyIdentifier = proxyUrl || 'DIRECT';
+        console.log(`[SCRAPER] Attempting to fetch via proxy: ${proxyIdentifier}`);
+        
+        try {
+            let htmlContent;
+            if (proxyUrl) {
+                const res = await fetch(proxyUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pageURL: finalUrl })
+                });
+                htmlContent = await res.text();
+            } else {
+                const res = await fetch(finalUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36' }});
+                htmlContent = await res.text();
             }
+
+            const $ = cheerio.load(htmlContent);
+
+            if ($('title').text().includes('Rate Limited')) {
+                console.error(`[SCRAPER] Proxy ${proxyIdentifier} was RATE LIMITED. Rotating to next proxy.`);
+                continue; // Try the next proxy
+            }
+
+            const movies = [];
             $('#UIMovieSummary > ul > li').each((i, el) => {
                 const listItem = $(el);
                 const title = listItem.find('.block2 h3').text().trim();
@@ -43,8 +74,7 @@ async function scrapePage(lang, pageNum) {
                         const yearText = listItem.find('.info p').first().text();
                         movies.push({
                             id: `${ID_PREFIX}:${lang}:${movieId}`,
-                            lang,
-                            title,
+                            lang, title,
                             year: yearText ? parseInt(yearText.match(/\d{4}/)?.[0], 10) : null,
                             poster: poster && !poster.startsWith('http') ? `https:${poster}` : poster,
                             movie_page_url: `${BASE_URL}${href}`,
@@ -55,88 +85,23 @@ async function scrapePage(lang, pageNum) {
                     }
                 }
             });
-        }
-    });
+            
+            console.log(`[SCRAPER] SUCCESS via ${proxyIdentifier}. Found ${movies.length} movies.`);
+            return { movies, rateLimited: false }; // Success!
 
-    await crawler.run([finalUrl]);
-    return { movies, rateLimited };
-}
-
-async function fetchStream(moviePageUrl, quality, session) {
-    log(`Attempting to fetch ${quality} stream from: ${moviePageUrl}`);
-    let streamInfo = null;
-    const urlToVisit = quality === 'HD' ? `${moviePageUrl}&uhd=true` : moviePageUrl;
-
-    const crawler = new CheerioCrawler({
-        async requestHandler({ $ }) {
-            const videoPlayerSection = $('#UIVideoPlayer');
-            const ejp = videoPlayerSection.attr('data-ejpingables');
-            const csrfToken = $('html').attr('data-pageid')?.replace(/\+/g, '+');
-
-            if (!ejp || !csrfToken) {
-                log(`Could not find tokens for ${quality} stream.`, 'error');
-                return;
-            }
-
-            const movieId = new URL(moviePageUrl).pathname.split('/')[3];
-            const lang = new URL(moviePageUrl).searchParams.get('lang');
-            const ajaxUrl = `${BASE_URL}/ajax/movie/watch/${movieId}/?lang=${lang}`;
-            const postData = new URLSearchParams({
-                'xEvent': 'UIVideoPlayer.PingOutcome',
-                'xJson': JSON.stringify({ "EJOutcomes": ejp, "NativeHLS": false }),
-                'gorilla.csrf.Token': csrfToken,
-            }).toString();
-
-            try {
-                const ajaxResponse = await axios.post(ajaxUrl, postData, {
-                    headers: {
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-                        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                        'X-Requested-With': 'XMLHttpRequest', 'Referer': urlToVisit,
-                        'Cookie': session.getCookieString(urlToVisit),
-                    }
-                });
-                if (ajaxResponse.data?.Data?.EJLinks) {
-                    const decodedLnk = Buffer.from(decodeEinth(ajaxResponse.data.Data.EJLinks), 'base64').toString('utf-8');
-                    const streamData = JSON.parse(decodedLnk);
-                    if (streamData.HLSLink) {
-                        streamInfo = { title: `Einthusan ${quality}`, url: streamData.HLSLink };
-                        log(`Successfully found ${quality} stream.`);
-                    }
-                }
-            } catch (error) {
-                log(`AJAX request for ${quality} stream failed: ${error.message}`, 'error');
-            }
-        }
-    });
-
-    await crawler.run([{ url: urlToVisit, session: session }]);
-    return streamInfo;
-}
-
-async function getStreamUrls(moviePageUrl) {
-    const streams = [];
-    const loggedInSession = await getPremiumSession();
-
-    if (loggedInSession) {
-        log('Executing premium user stream search...');
-        const hdStream = await fetchStream(moviePageUrl, 'HD', loggedInSession);
-        if (hdStream) streams.push(hdStream);
-    }
-    
-    log('Executing standard SD stream search (fallback)...');
-    const sdStream = await fetchStream(moviePageUrl, 'SD', new Session()); 
-    if (sdStream) {
-        if (!streams.find(s => s.url === sdStream.url)) {
-            streams.push(sdStream);
+        } catch (error) {
+            console.error(`[SCRAPER] Proxy ${proxyIdentifier} FAILED: ${error.message}. Rotating to next proxy.`);
+            continue; // Try the next proxy
         }
     }
 
-    return streams;
+    // If the loop finishes, all proxies have failed for this page.
+    console.error(`[SCRAPER] All proxies failed for ${finalUrl}. Signaling worker to pause.`);
+    return { movies: [], rateLimited: true };
 }
 
 module.exports = { 
     scrapePage, 
     getStreamUrls,
-    ID_PREFIX // Ensure this is exported for addon.js
+    ID_PREFIX
 };
