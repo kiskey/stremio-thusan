@@ -1,19 +1,42 @@
 // addon.js
 const { addonBuilder } = require('stremio-addon-sdk');
-const { getMoviesForCatalog } = require('./database');
-const { getStreamUrls } = require('./scraper'); // Still needed for on-demand streams
+const { getMoviesForCatalog, getMovieForMeta } = require('./database');
+const { getStreamUrls } = require('./scraper');
 
-// ... (manifest definition remains the same)
+const LANGUAGES = [
+    { code: 'tamil', name: 'Tamil' },
+    { code: 'hindi', name: 'Hindi' },
+    { code: 'telugu', name: 'Telugu' },
+    { code: 'malayalam', name: 'Malayalam' },
+    { code: 'kannada', name: 'Kannada' },
+];
+
+const manifest = {
+    id: 'org.einthusan.stremio',
+    version: '3.1.0',
+    name: 'Einthusan (DB)',
+    description: 'A persistent, database-backed addon for Einthusan with background scraping.',
+    resources: ['catalog', 'stream', 'meta'],
+    types: ['movie'],
+    catalogs: LANGUAGES.map(lang => ({
+        type: 'movie',
+        id: `einthusan-${lang.code}`,
+        name: `Einthusan ${lang.name}`,
+        // The genre filter has been removed as we only scrape "Recent"
+        extra: [{ name: "search", isRequired: false }, { name: "skip", isRequired: false }]
+    })),
+    idPrefixes: [ID_PREFIX]
+};
 
 const builder = new addonBuilder(manifest);
 
 builder.defineCatalogHandler(async ({ type, id, extra }) => {
     const lang = id.replace('einthusan-', '');
     const skip = parseInt(extra.skip || '0', 10);
-    const limit = 50; // Number of items per page
+    const limit = 30; // Number of items per page in Stremio UI
     
     console.log(`[ADDON] Serving catalog for ${lang} from database (skip: ${skip})`);
-    const metas = await getMoviesForCatalog(lang, extra.genre, skip, limit);
+    const metas = await getMoviesForCatalog(lang, skip, limit);
     return { metas };
 });
 
@@ -25,9 +48,9 @@ builder.defineMetaHandler(async ({ type, id }) => {
 
 builder.defineStreamHandler(async ({ type, id }) => {
     console.log(`[ADDON] Fetching on-demand streams for ${id}`);
-    // First, get the movie's page URL from the database
-    const movie = await getMovieForMeta(id);
+    const movie = await getMovieForMeta(id); // Get the movie details from DB
     if (!movie || !movie.movie_page_url) {
+        console.error(`[ADDON] Could not find movie page URL for ID: ${id}`);
         return { streams: [] };
     }
     const streams = await getStreamUrls(movie.movie_page_url);
