@@ -4,6 +4,7 @@ const { upsertMovie, getMovieCount } = require('./database');
 
 const LANGUAGES = ['tamil', 'hindi', 'telugu', 'malayalam', 'kannada'];
 const MAX_PAGES_TO_SCRAPE = parseInt(process.env.MAX_PAGES_TO_SCRAPE || '500', 10);
+const BASE_URL = process.env.BASE_URL || 'https://einthusan.tv';
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -13,7 +14,7 @@ async function scrapeLanguage(lang, maxPages) {
     console.log(`[WORKER] Starting scrape for language: ${lang}, up to ${maxPages} pages.`);
     for (let page = 1; page <= maxPages; page++) {
         const url = `${BASE_URL}/movie/results/?find=Recent&lang=${lang}&page=${page}`;
-        const { movies, rateLimited } = await scrapePage(url);
+        const { movies, rateLimited } = await scrapePage(lang, 'Recent', null, (page - 1) * 20);
 
         if (rateLimited) {
             const delay = Math.random() * 20000 + 10000; // 10s to 30s
@@ -23,7 +24,7 @@ async function scrapeLanguage(lang, maxPages) {
             continue;
         }
 
-        if (movies.length === 0 && page > 1) { // Allow page 1 to be empty without stopping
+        if (movies.length === 0 && page > 1) {
             console.log(`[WORKER] No movies found on page ${page} for ${lang}. Assuming end of list.`);
             break;
         }
@@ -49,21 +50,20 @@ async function runInitialScrape() {
 async function runPeriodicUpdate() {
     console.log('[WORKER] Checking for new releases (first 2 pages)...');
     for (const lang of LANGUAGES) {
-        await scrapeLanguage(lang, 2); // Only scrape first 2 pages
+        await scrapeLanguage(lang, 2);
     }
     console.log('[WORKER] Periodic update completed.');
 }
 
 async function startWorker() {
     const movieCount = await getMovieCount();
-    if (movieCount < 100) { // If DB is empty or has very few items
+    if (movieCount < 100) {
         await runInitialScrape();
     } else {
         console.log('[WORKER] Database already populated. Skipping initial full scrape.');
-        await runPeriodicUpdate(); // Run an update immediately on start
+        await runPeriodicUpdate();
     }
 
-    // Schedule periodic checks every 3 hours
     const threeHours = 3 * 60 * 60 * 1000;
     setInterval(runPeriodicUpdate, threeHours);
     console.log(`[WORKER] Scheduled periodic updates to run every 3 hours.`);
