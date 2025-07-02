@@ -42,7 +42,7 @@ async function getAuthenticatedClient() {
     try {
         const loginPageRes = await client.get(`${BASE_URL}/login/`);
         const $ = cheerio.load(loginPageRes.data);
-        const csrfToken = $('html').attr('data-pageid')?.replace(/+/g, '+');
+        const csrfToken = $('html').attr('data-pageid')?.replace(/\+/g, '+');
 
         if (!csrfToken) throw new Error('Could not find CSRF token on the login page.');
         console.log('[AUTH] Successfully retrieved CSRF token.');
@@ -98,7 +98,7 @@ async function fetchStream(client, moviePageUrl, quality) {
         const videoPlayerSection = $('#UIVideoPlayer');
         const ejp = videoPlayerSection.attr('data-ejpingables');
         const hlsLink = videoPlayerSection.attr('data-hls-link');
-        const csrfToken = $('html').attr('data-pageid')?.replace(/+/g, '+');
+        const csrfToken = $('html').attr('data-pageid')?.replace(/\+/g, '+');
 
         if (hlsLink) {
             console.log(`[STREAMER] Successfully found direct HLS link for ${quality}.`);
