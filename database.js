@@ -202,8 +202,7 @@ async function updateMovieEnrichment(id, tmdbId, imdbId) {
         SET tmdb_id = $2, imdb_id = $3
         WHERE id = $1;
     `;
-    // If TMDB gives us nulls, we still want to update to avoid re-processing
-    await pool.query(query, [id, tmdbId || null, imdbId || null]);
+    await pool.query(query, [id, tmdbId, imdbId]);
 }
 
 module.exports = {
