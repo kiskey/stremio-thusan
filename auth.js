@@ -47,7 +47,7 @@ async function getAuthenticatedClient() {
     try {
         const loginPageRes = await client.get(`${BASE_URL}/login/`);
         const $ = cheerio.load(loginPageRes.data);
-        const csrfToken = $('html').attr('data-pageid')?.replace(/+/g, '+');
+        const csrfToken = $('html').attr('data-pageid')?.replace(/\+/g, '+');
 
         if (!csrfToken) throw new Error('Could not find CSRF token on the login page.');
         console.log('[AUTH] Successfully retrieved CSRF token.');
@@ -112,7 +112,7 @@ async function fetchStream(client, moviePageUrl, quality) {
         // Fallback to the AJAX method only if the direct link is not present.
         console.log(`[STREAMER] No direct MP4 link found. Falling back to AJAX method for ${quality}.`);
         const ejp = videoPlayerSection.attr('data-ejpingables');
-        const csrfToken = $('html').attr('data-pageid')?.replace(/+/g, '+');
+        const csrfToken = $('html').attr('data-pageid')?.replace(/\+/g, '+');
 
         if (!ejp || !csrfToken) {
             console.error(`[STREAMER] Could not find AJAX tokens for ${quality} stream.`);
