@@ -1,16 +1,13 @@
 // scraper.js
 const fetch = require('node-fetch');
 const cheerio = require('cheerio');
-const { getStreamUrls } = require('./auth'); // Still needed for on-demand streams
+// --- THE FIX IS HERE ---
+// We now import getStreamUrls from auth.js where it lives.
+const { getStreamUrls } = require('./auth');
 
 const BASE_URL = process.env.BASE_URL || 'https://einthusan.tv';
 const ID_PREFIX = 'ein';
-
-// --- NEW: Proxy Rotation Logic ---
-const PROXY_URLS = (process.env.PROXY_URLS || '')
-    .split(',')
-    .map(url => url.trim())
-    .filter(url => url.length > 0);
+const PROXY_URLS = (process.env.PROXY_URLS || '').split(',').map(url => url.trim()).filter(Boolean);
 
 if (PROXY_URLS.length > 0) {
     console.log(`[SCRAPER] Loaded ${PROXY_URLS.length} proxies for rotation.`);
@@ -18,9 +15,7 @@ if (PROXY_URLS.length > 0) {
     console.log('[SCRAPER] No proxies configured. Will make direct requests.');
 }
 
-// Helper function to shuffle the proxy array for each page request
 function shuffleProxies() {
-    // Return a new shuffled array
     const shuffled = [...PROXY_URLS];
     for (let i = shuffled.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
@@ -32,14 +27,10 @@ function shuffleProxies() {
 async function scrapePage(lang, pageNum) {
     const finalUrl = `${BASE_URL}/movie/results/?find=Recent&lang=${lang}&page=${pageNum}`;
     console.log(`[SCRAPER] Beginning scrape job for: ${finalUrl}`);
-
-    // If no proxies are configured, add a 'null' entry to represent a direct connection.
     const proxiesToTry = PROXY_URLS.length > 0 ? shuffleProxies() : [null];
 
     for (const proxyUrl of proxiesToTry) {
         const proxyIdentifier = proxyUrl || 'DIRECT';
-        console.log(`[SCRAPER] Attempting to fetch via proxy: ${proxyIdentifier}`);
-        
         try {
             let htmlContent;
             if (proxyUrl) {
@@ -58,7 +49,7 @@ async function scrapePage(lang, pageNum) {
 
             if ($('title').text().includes('Rate Limited')) {
                 console.error(`[SCRAPER] Proxy ${proxyIdentifier} was RATE LIMITED. Rotating to next proxy.`);
-                continue; // Try the next proxy
+                continue;
             }
 
             const movies = [];
@@ -87,15 +78,14 @@ async function scrapePage(lang, pageNum) {
             });
             
             console.log(`[SCRAPER] SUCCESS via ${proxyIdentifier}. Found ${movies.length} movies.`);
-            return { movies, rateLimited: false }; // Success!
+            return { movies, rateLimited: false };
 
         } catch (error) {
             console.error(`[SCRAPER] Proxy ${proxyIdentifier} FAILED: ${error.message}. Rotating to next proxy.`);
-            continue; // Try the next proxy
+            continue;
         }
     }
 
-    // If the loop finishes, all proxies have failed for this page.
     console.error(`[SCRAPER] All proxies failed for ${finalUrl}. Signaling worker to pause.`);
     return { movies: [], rateLimited: true };
 }
