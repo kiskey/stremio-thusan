@@ -205,6 +205,17 @@ async function getUnenrichedMovies(limit) {
     return res.rows;
 }
 
+async function getFailedEnrichmentMovies(limit) {
+    const query = `
+        SELECT id, title, year FROM ${SCHEMA_NAME}.movies
+        WHERE tmdb_id = -1
+        ORDER BY last_scraped_at DESC
+        LIMIT $1;
+    `;
+    const res = await pool.query(query, [limit]);
+    return res.rows;
+}
+
 async function updateMovieEnrichment(id, tmdbId, imdbId) {
     const query = `
         UPDATE ${SCHEMA_NAME}.movies
@@ -226,5 +237,6 @@ module.exports = {
     updateScrapeProgress,
     setFullScrapeCompleted,
     getUnenrichedMovies,
+     getFailedEnrichmentMovies, 
     updateMovieEnrichment,
 };
