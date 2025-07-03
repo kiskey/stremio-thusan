@@ -19,6 +19,10 @@ function standardizeTitle(title) {
     // Remove year in parentheses, e.g., "Movie (2024)" -> "Movie"
     cleanedTitle = cleanedTitle.replace(/\s*\(\d{4}\)\s*$/, '');
     
+    // Remove "(Language Movie)" or "(Movie)" suffixes (case-insensitive)
+    const movieSuffixRegex = /\s*\((?:Kannada|Tamil|Malayalam|Hindi|Telugu|)\s*Movie\)/i;
+    cleanedTitle = cleanedTitle.replace(movieSuffixRegex, '');
+
     // Remove "UNCUT" (case-insensitive)
     cleanedTitle = cleanedTitle.replace(/\s*uncut\s*/i, '');
 
@@ -49,16 +53,25 @@ async function enrichMovieFromTMDB(movie, options = {}) {
     }
 
     try {
+        // --- THIS IS THE CORE BUG FIX ---
+        // Build the params object programmatically to handle missing years.
+        const params = {
+            api_key: TMDB_API_KEY,
+            query: searchTitle,
+            page: 1
+        };
+        // Only add the year to the search if it exists in our database.
+        if (movie.year) {
+            params.year = movie.year;
+        }
+
         const searchUrl = `${TMDB_BASE_URL}/search/movie`;
-        const searchResponse = await axios.get(searchUrl, {
-            params: { api_key: TMDB_API_KEY, query: searchTitle, year: movie.year, page: 1 }
-        });
+        const searchResponse = await axios.get(searchUrl, { params });
 
         const searchResults = searchResponse.data.results;
         if (!searchResults || searchResults.length === 0) {
-            // If the second pass (cleaning) also fails, mark it for permanent ignore (-2)
             const failureCode = options.cleanTitle ? -2 : -1;
-            console.log(`[TMDB] No results for "${searchTitle}". Marking as ${failureCode}.`);
+            console.log(`[TMDB] No results for "${searchTitle}" (Year: ${movie.year || 'N/A'}). Marking as ${failureCode}.`);
             return { tmdb_id: failureCode, imdb_id: null };
         }
 
@@ -74,7 +87,7 @@ async function enrichMovieFromTMDB(movie, options = {}) {
 
     } catch (error) {
         console.error(`[TMDB] API Error while enriching "${searchTitle}":`, error.message);
-        return null; // Return null to signal retry on network errors
+        return null;
     }
 }
 
