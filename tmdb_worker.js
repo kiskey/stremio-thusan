@@ -1,5 +1,5 @@
 // tmdb_worker.js
-const { getUnenrichedMovies, getFailedEnrichmentMovies, updateMovieEnrichment } = require('./database');
+const { getUnenrichedMovies, getFailedEnrichmentMovies, getBroadSearchMovies, updateMovieEnrichment } = require('./database');
 const { enrichMovieFromTMDB } = require('./tmdb');
 
 const BATCH_SIZE = 25;
@@ -8,51 +8,51 @@ function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-/**
- * Runs the full two-phase enrichment process.
- * @returns {Promise<boolean>} Resolves to true if any work was done, false otherwise.
- */
 async function runFullEnrichmentProcess() {
     let workWasDone = false;
 
-    // --- Phase 1: First Pass for new movies (tmdb_id IS NULL) ---
-    console.log('[TMDB WORKER] Starting Phase 1: Processing new movies.');
+    // --- Phase 1: First Pass (Strict: original title + year) ---
     const newMovies = await getUnenrichedMovies(BATCH_SIZE);
     if (newMovies.length > 0) {
         workWasDone = true;
-        console.log(`[TMDB WORKER] Phase 1: Found ${newMovies.length} new movies to process.`);
+        console.log(`[TMDB WORKER] Phase 1: Found ${newMovies.length} new movies.`);
         for (const movie of newMovies) {
-            const enrichedData = await enrichMovieFromTMDB(movie); // No cleaning options
-            if (enrichedData) {
-                await updateMovieEnrichment(movie.id, enrichedData.tmdb_id, enrichedData.imdb_id);
-            }
-            await sleep(500);
+            const enrichedData = await enrichMovieFromTMDB(movie);
+            if (enrichedData) await updateMovieEnrichment(movie.id, enrichedData.tmdb_id, enrichedData.imdb_id);
+            await sleep(250); // Shorter delay as these are distinct API calls
         }
-    } else {
-        console.log('[TMDB WORKER] Phase 1: No new movies to process.');
     }
 
-    // --- Phase 2: Second Pass for movies that failed once (tmdb_id = -1) ---
-    console.log('[TMDB WORKER] Starting Phase 2: Retrying failed movies with title standardization.');
+    // --- Phase 2: Second Pass (Standardized: cleaned title + year) ---
     const failedMovies = await getFailedEnrichmentMovies(BATCH_SIZE);
     if (failedMovies.length > 0) {
         workWasDone = true;
-        console.log(`[TMDB WORKER] Phase 2: Found ${failedMovies.length} failed movies to retry.`);
+        console.log(`[TMDB WORKER] Phase 2: Found ${failedMovies.length} movies for standardized retry.`);
         for (const movie of failedMovies) {
-            // Pass the cleanTitle option for the second attempt
             const enrichedData = await enrichMovieFromTMDB(movie, { cleanTitle: true });
-            if (enrichedData) {
-                await updateMovieEnrichment(movie.id, enrichedData.tmdb_id, enrichedData.imdb_id);
-            }
-            await sleep(500);
+            if (enrichedData) await updateMovieEnrichment(movie.id, enrichedData.tmdb_id, enrichedData.imdb_id);
+            await sleep(250);
+
         }
-    } else {
-        console.log('[TMDB WORKER] Phase 2: No failed movies to retry.');
+    }
+
+    // --- Phase 3: Third Pass (Broad: cleaned title + no year + region=IN) ---
+    const broadSearchMovies = await getBroadSearchMovies(BATCH_SIZE);
+    if (broadSearchMovies.length > 0) {
+        workWasDone = true;
+        console.log(`[TMDB WORKER] Phase 3: Found ${broadSearchMovies.length} movies for broad, regional search.`);
+        for (const movie of broadSearchMovies) {
+            const enrichedData = await enrichMovieFromTMDB(movie, { broadSearch: true });
+            if (enrichedData) await updateMovieEnrichment(movie.id, enrichedData.tmdb_id, enrichedData.imdb_id);
+            await sleep(250);
+        }
     }
     
+    if (!workWasDone) {
+        console.log('[TMDB WORKER] All enrichment phases complete. No movies needed processing in this cycle.');
+    }
     return workWasDone;
 }
-
 
 function startTmdbWorker() {
     const tmdbApiKey = process.env.TMDB_API_KEY;
@@ -69,7 +69,7 @@ function startTmdbWorker() {
         while (moreWorkToDo) {
             moreWorkToDo = await runFullEnrichmentProcess();
             if (moreWorkToDo) {
-                await sleep(5000); // 5-second delay between full cycles
+                await sleep(5000); // 5-second delay between full 3-phase cycles
             }
         }
         console.log('[TMDB WORKER] Aggressive catch-up mode complete. Switching to periodic checks.');
