@@ -1,44 +1,58 @@
 // tmdb_worker.js
-const { getUnenrichedMovies, updateMovieEnrichment } = require('./database');
+const { getUnenrichedMovies, getFailedEnrichmentMovies, updateMovieEnrichment } = require('./database');
 const { enrichMovieFromTMDB } = require('./tmdb');
 
-const BATCH_SIZE = 25; // Increased batch size for faster initial processing
+const BATCH_SIZE = 25;
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 /**
- * Runs one cycle of the enrichment process.
- * @returns {Promise<boolean>} A promise that resolves to true if there might be more work, false otherwise.
+ * Runs the full two-phase enrichment process.
+ * @returns {Promise<boolean>} Resolves to true if any work was done, false otherwise.
  */
-async function runEnrichmentCycle() {
-    try {
-        const moviesToEnrich = await getUnenrichedMovies(BATCH_SIZE);
+async function runFullEnrichmentProcess() {
+    let workWasDone = false;
 
-        if (moviesToEnrich.length === 0) {
-            console.log('[TMDB WORKER] No more movies need enrichment.');
-            return false; // Signal that the work is done
-        }
-
-        console.log(`[TMDB WORKER] Found ${moviesToEnrich.length} movies to enrich in this batch.`);
-
-        for (const movie of moviesToEnrich) {
-            const enrichedData = await enrichMovieFromTMDB(movie);
-            
+    // --- Phase 1: First Pass for new movies (tmdb_id IS NULL) ---
+    console.log('[TMDB WORKER] Starting Phase 1: Processing new movies.');
+    const newMovies = await getUnenrichedMovies(BATCH_SIZE);
+    if (newMovies.length > 0) {
+        workWasDone = true;
+        console.log(`[TMDB WORKER] Phase 1: Found ${newMovies.length} new movies to process.`);
+        for (const movie of newMovies) {
+            const enrichedData = await enrichMovieFromTMDB(movie); // No cleaning options
             if (enrichedData) {
                 await updateMovieEnrichment(movie.id, enrichedData.tmdb_id, enrichedData.imdb_id);
             }
-            await sleep(500); // Small polite delay between individual API calls
+            await sleep(500);
         }
-
-        return true; // Signal that there might be more work to do
-
-    } catch (error) {
-        console.error('[TMDB WORKER] An error occurred during the enrichment cycle:', error);
-        return true; // Assume there's still work to do on error, will retry after a delay
+    } else {
+        console.log('[TMDB WORKER] Phase 1: No new movies to process.');
     }
+
+    // --- Phase 2: Second Pass for movies that failed once (tmdb_id = -1) ---
+    console.log('[TMDB WORKER] Starting Phase 2: Retrying failed movies with title standardization.');
+    const failedMovies = await getFailedEnrichmentMovies(BATCH_SIZE);
+    if (failedMovies.length > 0) {
+        workWasDone = true;
+        console.log(`[TMDB WORKER] Phase 2: Found ${failedMovies.length} failed movies to retry.`);
+        for (const movie of failedMovies) {
+            // Pass the cleanTitle option for the second attempt
+            const enrichedData = await enrichMovieFromTMDB(movie, { cleanTitle: true });
+            if (enrichedData) {
+                await updateMovieEnrichment(movie.id, enrichedData.tmdb_id, enrichedData.imdb_id);
+            }
+            await sleep(500);
+        }
+    } else {
+        console.log('[TMDB WORKER] Phase 2: No failed movies to retry.');
+    }
+    
+    return workWasDone;
 }
+
 
 function startTmdbWorker() {
     const tmdbApiKey = process.env.TMDB_API_KEY;
@@ -49,22 +63,19 @@ function startTmdbWorker() {
     
     console.log('[TMDB WORKER] Starting TMDB enrichment worker...');
     
-    // Immediately Invoked Function Expression (IIFE) to handle the async catch-up process
     (async () => {
         console.log('[TMDB WORKER] Starting initial aggressive catch-up mode...');
         let moreWorkToDo = true;
         while (moreWorkToDo) {
-            moreWorkToDo = await runEnrichmentCycle();
+            moreWorkToDo = await runFullEnrichmentProcess();
             if (moreWorkToDo) {
-                // Wait only a few seconds between batches during the aggressive phase
-                await sleep(5000); // 5-second delay
+                await sleep(5000); // 5-second delay between full cycles
             }
         }
         console.log('[TMDB WORKER] Aggressive catch-up mode complete. Switching to periodic checks.');
 
-        // After the backlog is clear, switch to the slower, periodic checks for new content
         const fifteenMinutes = 15 * 60 * 1000;
-        setInterval(runEnrichmentCycle, fifteenMinutes);
+        setInterval(runFullEnrichmentProcess, fifteenMinutes);
         console.log(`[TMDB WORKER] Scheduled periodic checks to run every 15 minutes.`);
     })();
 }
