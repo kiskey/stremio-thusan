@@ -74,9 +74,9 @@ async function runInitialScrape() {
 }
 
 async function runPeriodicUpdate() {
-    console.log('[WORKER] Checking for new releases (first 2 pages)...');
+    console.log('[WORKER] Checking for new releases (first 4 pages)...');
     for (const lang of LANGUAGES) {
-        await scrapeLanguage(lang, 1, 2); 
+        await scrapeLanguage(lang, 1, 4); 
     }
     console.log('[WORKER] Periodic update completed.');
 }
