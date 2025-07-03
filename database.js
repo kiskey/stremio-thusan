@@ -11,7 +11,9 @@ async function migrateDatabaseSchema() {
         console.log('[DB MIGRATION] Checking schema for enrichment columns...');
         const checkEnrichmentCols = await client.query(`
             SELECT 1 FROM information_schema.columns 
-            WHERE table_schema = '${SCHEMA_NAME}' AND table_name = 'movies' AND column_name = 'tmdb_id'
+            WHERE table_schema = '${SCHEMA_NAME}' 
+            AND table_name = 'movies' 
+            AND column_name = 'tmdb_id'
         `);
 
         if (checkEnrichmentCols.rowCount === 0) {
@@ -123,7 +125,6 @@ async function getMoviesForCatalog(lang, skip, limit) {
 }
 
 async function searchMovies(lang, searchTerm) {
-    console.log(`[DB] Searching for term: "${searchTerm}" in language: ${lang}`);
     const query = `
         SELECT id, title AS name, poster, year FROM ${SCHEMA_NAME}.movies
         WHERE lang = $1 AND title ILIKE $2
@@ -237,6 +238,6 @@ module.exports = {
     updateScrapeProgress,
     setFullScrapeCompleted,
     getUnenrichedMovies,
-     getFailedEnrichmentMovies, 
+    getFailedEnrichmentMovies,
     updateMovieEnrichment,
 };
