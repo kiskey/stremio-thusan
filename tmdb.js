@@ -11,7 +11,7 @@ if (!TMDB_API_KEY) {
 function standardizeTitle(title) {
     let cleanedTitle = title;
     cleanedTitle = cleanedTitle.replace(/\s*\(\d{4}\)\s*$/, '');
-    const movieSuffixRegex = /\s*\((?:Kannada|Tamil|Malayalam|Hindi|Telugu|)\s*Movie\)/i;
+    const movieSuffixRegex = /\s*\((?:Kannada|Tamil|Malayalam|Hindi|Telugu)(?:\s*Movie)?\)/i;
     cleanedTitle = cleanedTitle.replace(movieSuffixRegex, '');
     cleanedTitle = cleanedTitle.replace(/\s*uncut\s*/i, '');
     cleanedTitle = cleanedTitle.replace(/^['"]+|['"]+$/g, '');
