@@ -8,35 +8,20 @@ if (!TMDB_API_KEY) {
     console.warn('[TMDB] WARNING: TMDB_API_KEY is not set. Movie enrichment will be skipped.');
 }
 
-/**
- * Cleans a movie title by removing common artifacts that interfere with searching.
- * @param {string} title - The original movie title.
- * @returns {string} The cleaned title.
- */
 function standardizeTitle(title) {
     let cleanedTitle = title;
-    
-    // Remove year in parentheses, e.g., "Movie (2024)" -> "Movie"
     cleanedTitle = cleanedTitle.replace(/\s*\(\d{4}\)\s*$/, '');
-    
-    // Remove "(Language Movie)" or "(Movie)" suffixes (case-insensitive)
     const movieSuffixRegex = /\s*\((?:Kannada|Tamil|Malayalam|Hindi|Telugu|)\s*Movie\)/i;
     cleanedTitle = cleanedTitle.replace(movieSuffixRegex, '');
-
-    // Remove "UNCUT" (case-insensitive)
     cleanedTitle = cleanedTitle.replace(/\s*uncut\s*/i, '');
-
-    // Remove leading/trailing quotes (single or double)
     cleanedTitle = cleanedTitle.replace(/^['"]+|['"]+$/g, '');
-    
-    // Trim whitespace from the ends
     return cleanedTitle.trim();
 }
 
 /**
- * Enriches a movie with data from TMDB, with an option to clean the title first.
+ * Enriches a movie with data from TMDB using a multi-phase strategy.
  * @param {object} movie - A movie object with `title` and `year`.
- * @param {object} options - Optional settings. { cleanTitle: boolean }
+ * @param {object} options - Optional settings. { cleanTitle: boolean, broadSearch: boolean }
  * @returns {Promise<object|null>} Object with {tmdb_id, imdb_id} or null on network error.
  */
 async function enrichMovieFromTMDB(movie, options = {}) {
@@ -45,7 +30,7 @@ async function enrichMovieFromTMDB(movie, options = {}) {
     }
 
     let searchTitle = movie.title;
-    if (options.cleanTitle) {
+    if (options.cleanTitle || options.broadSearch) {
         searchTitle = standardizeTitle(movie.title);
         if (searchTitle !== movie.title) {
             console.log(`[TMDB] Standardized title from "${movie.title}" to "${searchTitle}"`);
@@ -53,16 +38,20 @@ async function enrichMovieFromTMDB(movie, options = {}) {
     }
 
     try {
-        // --- THIS IS THE CORE BUG FIX ---
-        // Build the params object programmatically to handle missing years.
         const params = {
             api_key: TMDB_API_KEY,
             query: searchTitle,
             page: 1
         };
-        // Only add the year to the search if it exists in our database.
-        if (movie.year) {
+
+        // Phase 1 & 2: Use the year if available.
+        if (!options.broadSearch && movie.year) {
             params.year = movie.year;
+        }
+
+        // Phase 3: Don't use the year, but add the region bias.
+        if (options.broadSearch) {
+            params.region = 'IN'; // Bias search to India
         }
 
         const searchUrl = `${TMDB_BASE_URL}/search/movie`;
@@ -70,8 +59,11 @@ async function enrichMovieFromTMDB(movie, options = {}) {
 
         const searchResults = searchResponse.data.results;
         if (!searchResults || searchResults.length === 0) {
-            const failureCode = options.cleanTitle ? -2 : -1;
-            console.log(`[TMDB] No results for "${searchTitle}" (Year: ${movie.year || 'N/A'}). Marking as ${failureCode}.`);
+            let failureCode = -1; // Default for Phase 1 failure
+            if (options.cleanTitle) failureCode = -3; // Phase 2 failure
+            if (options.broadSearch) failureCode = -2; // Phase 3 (final) failure
+            
+            console.log(`[TMDB] No results for "${searchTitle}" (Phase: ${options.broadSearch ? 3 : (options.cleanTitle ? 2 : 1)}). Marking as ${failureCode}.`);
             return { tmdb_id: failureCode, imdb_id: null };
         }
 
