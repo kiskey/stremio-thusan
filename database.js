@@ -5,7 +5,6 @@ let pool = null;
 const ADDON_DB_NAME = 'stremio_addons';
 const SCHEMA_NAME = 'einthusan';
 
-// ... (migration and initialization functions remain unchanged) ...
 async function migrateDatabaseSchema() {
     const client = await pool.connect();
     try {
@@ -106,7 +105,9 @@ async function initializeDatabase() {
                 movie_page_url TEXT,
                 last_scraped_at TIMESTAMPTZ DEFAULT NOW(),
                 published_at TIMESTAMPTZ,
-                is_uhd BOOLEAN NOT NULL DEFAULT FALSE
+                is_uhd BOOLEAN NOT NULL DEFAULT FALSE,
+                tmdb_id INT,
+                imdb_id VARCHAR(20)
             );
         `);
         
@@ -145,26 +146,46 @@ async function upsertMovie(movie) {
 }
 
 async function getMoviesForCatalog(lang, skip, limit) {
+    // Return all necessary fields to build the hybrid ID later
     const query = `
-        SELECT id, title AS name, poster, year FROM ${SCHEMA_NAME}.movies
+        SELECT id, imdb_id, title AS name, poster, year FROM ${SCHEMA_NAME}.movies
         WHERE lang = $1 ORDER BY published_at DESC NULLS LAST, title ASC LIMIT $2 OFFSET $3;
     `;
     const res = await pool.query(query, [lang, limit, skip]);
-    return res.rows.map(row => ({ ...row, type: 'movie' }));
+    
+    // Construct the hybrid ID here for the catalog view
+    return res.rows.map(row => {
+        return {
+            id: row.imdb_id ? `${row.imdb_id}:${row.id}` : row.id,
+            name: row.name,
+            poster: row.poster,
+            year: row.year,
+            type: 'movie'
+        };
+    });
 }
 
 async function searchMovies(lang, searchTerm) {
     const query = `
-        SELECT id, title AS name, poster, year FROM ${SCHEMA_NAME}.movies
+        SELECT id, imdb_id, title AS name, poster, year FROM ${SCHEMA_NAME}.movies
         WHERE lang = $1 AND title ILIKE $2
         ORDER BY year DESC, title ASC
         LIMIT 50;
     `;
     const values = [lang, `%${searchTerm}%`];
     const res = await pool.query(query, values);
-    return res.rows.map(row => ({ ...row, type: 'movie' }));
-}
 
+    // Also construct hybrid ID for search results
+    return res.rows.map(row => {
+        return {
+            id: row.imdb_id ? `${row.imdb_id}:${row.id}` : row.id,
+            name: row.name,
+            poster: row.poster,
+            year: row.year,
+            type: 'movie'
+        };
+    });
+}
 
 async function getMovieForMeta(id) {
     const query = `SELECT * FROM ${SCHEMA_NAME}.movies WHERE id = $1;`;
@@ -172,9 +193,8 @@ async function getMovieForMeta(id) {
     if (res.rows.length > 0) {
         const movie = res.rows[0];
         const meta = {
-            // ** THE FIX IS HERE **
-            // The primary 'id' is ALWAYS our internal, unique ID.
-            id: movie.id, 
+            // The primary 'id' is now the hybrid ID if imdb_id exists.
+            id: movie.imdb_id ? `${movie.imdb_id}:${movie.id}` : movie.id,
             type: 'movie',
             name: movie.title,
             poster: movie.poster,
@@ -184,11 +204,6 @@ async function getMovieForMeta(id) {
             movie_page_url: movie.movie_page_url,
             is_uhd: movie.is_uhd,
         };
-
-        // Provide imdb_id as supplementary data for Stremio, not as the primary ID.
-        if (movie.imdb_id) {
-            meta.imdb_id = movie.imdb_id;
-        }
 
         return { meta };
     }
@@ -209,7 +224,7 @@ async function getMovieByImdbId(imdbId) {
     }
     return { meta: null };
 }
-// ... (rest of the file is unchanged) ...
+
 async function getScrapeProgress(lang) {
     const query = `SELECT last_page_scraped, full_scrape_completed FROM ${SCHEMA_NAME}.scrape_progress WHERE lang = $1;`;
     const res = await pool.query(query, [lang]);
