@@ -14,7 +14,7 @@ const LANGUAGES = [
 
 const manifest = {
     id: 'org.einthusan.stremio.db',
-    version: '4.1.0', // Version updated for search feature
+    version: '4.2.0', // Version updated for catalog enhancements
     name: 'Einthusan (DB)',
     description: 'A persistent, database-backed addon for Einthusan with background scraping and TMDB enrichment.',
     resources: ['catalog', 'stream', 'meta'],
@@ -81,7 +81,9 @@ builder.defineStreamHandler(async ({ type, id }) => {
         console.error(`[ADDON] Could not find movie page URL for ID: ${id}`);
         return { streams: [] };
     }
-    const streams = await getStreamUrls(movie.movie_page_url);
+    
+    // R2: Pass the `is_uhd` flag from the metadata to the stream fetcher.
+    const streams = await getStreamUrls(movie.movie_page_url, movie.is_uhd);
     return { streams };
 });
 
