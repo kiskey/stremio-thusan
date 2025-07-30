@@ -42,7 +42,6 @@ async function migrateDatabaseSchema() {
             console.log('[DB MIGRATION] Scrape progress schema is up to date.');
         }
 
-        // R1 & R2: Add columns for published_at and is_uhd for catalog ordering and quality indication.
         console.log('[DB MIGRATION] Checking schema for catalog enhancement columns (published_at, is_uhd)...');
         const checkCatalogCols = await client.query(`
             SELECT column_name FROM information_schema.columns 
@@ -105,8 +104,8 @@ async function initializeDatabase() {
                 description TEXT,
                 movie_page_url TEXT,
                 last_scraped_at TIMESTAMPTZ DEFAULT NOW(),
-                published_at TIMESTAMPTZ, -- R1: Store publication timestamp
-                is_uhd BOOLEAN NOT NULL DEFAULT FALSE -- R2: Store UltraHD availability
+                published_at TIMESTAMPTZ,
+                is_uhd BOOLEAN NOT NULL DEFAULT FALSE
             );
         `);
         
@@ -125,7 +124,6 @@ async function initializeDatabase() {
 }
 
 async function upsertMovie(movie) {
-    // R1, R2: Update query to handle new `published_at` and `is_uhd` fields.
     const query = `
         INSERT INTO ${SCHEMA_NAME}.movies (id, lang, title, year, poster, description, movie_page_url, published_at, is_uhd, last_scraped_at)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
@@ -146,10 +144,10 @@ async function upsertMovie(movie) {
 }
 
 async function getMoviesForCatalog(lang, skip, limit) {
-    // R1: Order by the new `published_at` column for most recent first.
+    // R1: Add 'NULLS LAST' to ensure movies without a timestamp are sorted to the end.
     const query = `
         SELECT id, title AS name, poster, year FROM ${SCHEMA_NAME}.movies
-        WHERE lang = $1 ORDER BY published_at DESC, title ASC LIMIT $2 OFFSET $3;
+        WHERE lang = $1 ORDER BY published_at DESC NULLS LAST, title ASC LIMIT $2 OFFSET $3;
     `;
     const res = await pool.query(query, [lang, limit, skip]);
     return res.rows.map(row => ({ ...row, type: 'movie' }));
@@ -182,7 +180,7 @@ async function getMovieForMeta(id) {
                 description: movie.description,
                 year: movie.year,
                 movie_page_url: movie.movie_page_url,
-                is_uhd: movie.is_uhd, // R2: Pass UHD flag to the addon interface
+                is_uhd: movie.is_uhd,
             }
         };
     }
@@ -250,7 +248,6 @@ async function getFailedEnrichmentMovies(limit) {
 }
 
 async function getBroadSearchMovies(limit) {
-    // Phase 3
     const query = `
         SELECT id, title, year FROM ${SCHEMA_NAME}.movies
         WHERE tmdb_id = -3
