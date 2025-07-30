@@ -14,7 +14,7 @@ const LANGUAGES = [
 
 const manifest = {
     id: 'org.einthusan.stremio.db',
-    version: '5.0.0', // Final, robust version with Hybrid IDs
+    version: '7.0.0', // Final definitive version
     name: 'Einthusan (DB)',
     description: 'A persistent, database-backed addon for Einthusan with background scraping and TMDB enrichment.',
     resources: ['catalog', 'stream', 'meta'],
@@ -52,21 +52,13 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
 builder.defineMetaHandler(async ({ type, id }) => {
     console.log(`[ADDON] Serving meta for ID: ${id}`);
     
-    // The meta handler now also parses the hybrid ID to fetch the specific record.
-    const idParts = id.split(':');
     let result;
-
-    if (id.startsWith('tt') && idParts.length > 1) {
-        // This is a Hybrid ID like 'tt12345:ein:lang:id'. We use the internal part.
-        const internalId = idParts.slice(1).join(':');
-        console.log(`[ADDON] Hybrid ID detected. Using internal ID for meta: ${internalId}`);
-        result = await getMovieForMeta(internalId);
-    } else if (id.startsWith('tt')) {
-        // This is a pure IMDb ID lookup.
-        console.log(`[ADDON] Pure IMDb ID detected. Looking up best match: ${id}`);
+    if (id.startsWith('tt')) {
+        // This is a pure IMDb ID lookup from another addon or search.
+        console.log(`[ADDON] Pure IMDb ID detected for meta. Looking up best match: ${id}`);
         result = await getMovieByImdbId(id);
     } else {
-        // This is one of our internal IDs without an IMDb entry.
+        // This is our internal ID.
         result = await getMovieForMeta(id);
     }
 
@@ -75,32 +67,36 @@ builder.defineMetaHandler(async ({ type, id }) => {
 
 builder.defineStreamHandler(async ({ type, id }) => {
     console.log(`[ADDON] Fetching streams for ID: ${id}`);
-
-    // The stream handler parses the hybrid ID to get the exact internal ID.
-    const idParts = id.split(':');
+    
     let result;
-
-    if (id.startsWith('tt') && idParts.length > 1) {
-        // This is our primary, context-aware path for enriched movies.
-        const internalId = idParts.slice(1).join(':');
-        console.log(`[ADDON] Hybrid ID detected. Using internal ID for stream: ${internalId}`);
-        result = await getMovieForMeta(internalId);
-    } else if (id.startsWith('tt')) {
-        // Fallback for requests from other addons that only know the IMDb ID.
-        console.log(`[ADDON] Pure IMDb ID stream request. Looking up best match: ${id}`);
+    // Since the video.id from our addon is 'ein:...', this logic path will be
+    // correctly followed for all items selected from our addon.
+    // The 'tt' path will only be used for lookups originating from other addons.
+    if (id.startsWith('tt')) {
+        console.log(`[ADDON] Pure IMDb ID detected for stream. Looking up best match: ${id}`);
         result = await getMovieByImdbId(id);
     } else {
-        // Path for unenriched movies.
+        console.log(`[ADDON] Internal ID received. Fetching exact record: ${id}`);
         result = await getMovieForMeta(id);
     }
     
-    const movie = result.meta;
-    if (!movie || !movie.movie_page_url) {
-        console.error(`[ADDON] Could not find movie page URL for ID: ${id}`);
-        return { streams: [] };
+    // The movie object retrieved via getMovieForMeta contains the correct context.
+    // We need to extract the actual movie data, which is now inside the 'meta' property
+    // of the result object from the database functions.
+    const movieData = result ? result.meta : null;
+
+    if (!movieData || !movieData.movie_page_url) {
+        // Since getMovieForMeta now returns an object with a 'meta' key, we need to extract that
+        // to get to the actual movie page URL.
+        const metaFromDb = result ? result.meta : null;
+        if (!metaFromDb || !metaFromDb.movie_page_url) {
+            console.error(`[ADDON] Could not find movie page URL for ID: ${id}`);
+            return { streams: [] };
+        }
     }
     
-    const streams = await getStreamUrls(movie);
+    // Pass the actual movie object to getStreamUrls
+    const streams = await getStreamUrls(movieData);
     return { streams };
 });
 
