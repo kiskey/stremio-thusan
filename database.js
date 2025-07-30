@@ -145,82 +145,85 @@ async function upsertMovie(movie) {
     await pool.query(query, values).catch(err => console.error(`[DB] Error upserting movie ${movie.title}:`, err));
 }
 
+function buildMeta(movie) {
+    if (!movie) return null;
+
+    // Use the IMDb ID for aggregation if it exists, otherwise use our internal ID.
+    const universalId = movie.imdb_id || movie.id;
+
+    // The name can be enriched to show context to the user in the UI.
+    const displayName = movie.lang ? `${movie.name || movie.title} (${movie.lang.charAt(0).toUpperCase() + movie.lang.slice(1)})` : (movie.name || movie.title);
+
+    const meta = {
+        id: universalId,
+        type: 'movie',
+        name: displayName,
+        poster: movie.poster,
+        background: movie.poster,
+        description: movie.description,
+        year: movie.year,
+        // ** THE FIX IS HERE **
+        // We create a 'videos' array containing one video object.
+        // The ID of this video object is our internal, context-specific ID.
+        // Stremio will use THIS ID when requesting streams from our addon.
+        videos: [{
+            id: movie.id,
+            title: movie.name || movie.title,
+            released: movie.published_at || new Date(movie.year, 0, 1).toISOString(),
+        }]
+    };
+
+    // For movies without an IMDb ID, we don't need to add the video array
+    // because the meta.id is already our unique internal ID.
+    if (!movie.imdb_id) {
+        delete meta.videos;
+    }
+
+    return meta;
+}
+
 async function getMoviesForCatalog(lang, skip, limit) {
-    // Return all necessary fields to build the hybrid ID later
     const query = `
-        SELECT id, imdb_id, title AS name, poster, year FROM ${SCHEMA_NAME}.movies
+        SELECT id, imdb_id, lang, title AS name, year, poster, description, published_at FROM ${SCHEMA_NAME}.movies
         WHERE lang = $1 ORDER BY published_at DESC NULLS LAST, title ASC LIMIT $2 OFFSET $3;
     `;
     const res = await pool.query(query, [lang, limit, skip]);
-    
-    // Construct the hybrid ID here for the catalog view
-    return res.rows.map(row => {
-        return {
-            id: row.imdb_id ? `${row.imdb_id}:${row.id}` : row.id,
-            name: row.name,
-            poster: row.poster,
-            year: row.year,
-            type: 'movie'
-        };
-    });
+    return res.rows.map(buildMeta);
 }
 
 async function searchMovies(lang, searchTerm) {
     const query = `
-        SELECT id, imdb_id, title AS name, poster, year FROM ${SCHEMA_NAME}.movies
+        SELECT id, imdb_id, lang, title AS name, year, poster, description, published_at FROM ${SCHEMA_NAME}.movies
         WHERE lang = $1 AND title ILIKE $2
         ORDER BY year DESC, title ASC
         LIMIT 50;
     `;
     const values = [lang, `%${searchTerm}%`];
     const res = await pool.query(query, values);
-
-    // Also construct hybrid ID for search results
-    return res.rows.map(row => {
-        return {
-            id: row.imdb_id ? `${row.imdb_id}:${row.id}` : row.id,
-            name: row.name,
-            poster: row.poster,
-            year: row.year,
-            type: 'movie'
-        };
-    });
+    return res.rows.map(buildMeta);
 }
 
 async function getMovieForMeta(id) {
-    const query = `SELECT * FROM ${SCHEMA_NAME}.movies WHERE id = $1;`;
+    // This function can now be simpler. It just fetches the specific record.
+    const query = `SELECT *, title as name FROM ${SCHEMA_NAME}.movies WHERE id = $1;`;
     const res = await pool.query(query, [id]);
     if (res.rows.length > 0) {
-        const movie = res.rows[0];
-        const meta = {
-            // The primary 'id' is now the hybrid ID if imdb_id exists.
-            id: movie.imdb_id ? `${movie.imdb_id}:${movie.id}` : movie.id,
-            type: 'movie',
-            name: movie.title,
-            poster: movie.poster,
-            background: movie.poster,
-            description: movie.description,
-            year: movie.year,
-            movie_page_url: movie.movie_page_url,
-            is_uhd: movie.is_uhd,
-        };
-
-        return { meta };
+        return { meta: buildMeta(res.rows[0]) };
     }
     return { meta: null };
 }
 
 async function getMovieByImdbId(imdbId) {
+    // This function finds the best match for a given IMDb ID.
     const query = `
-        SELECT * FROM ${SCHEMA_NAME}.movies 
+        SELECT *, title as name FROM ${SCHEMA_NAME}.movies 
         WHERE imdb_id = $1 
         ORDER BY is_uhd DESC, published_at DESC NULLS LAST 
         LIMIT 1;
     `;
     const res = await pool.query(query, [imdbId]);
     if (res.rows.length > 0) {
-        // This function will now return the full, correctly structured meta object.
-        return getMovieForMeta(res.rows[0].id);
+        return { meta: buildMeta(res.rows[0]) };
     }
     return { meta: null };
 }
