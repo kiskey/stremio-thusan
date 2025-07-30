@@ -14,7 +14,7 @@ const LANGUAGES = [
 
 const manifest = {
     id: 'org.einthusan.stremio.db',
-    version: '4.2.0', // Version updated for catalog enhancements
+    version: '4.2.1', // Version updated for stream title fix
     name: 'Einthusan (DB)',
     description: 'A persistent, database-backed addon for Einthusan with background scraping and TMDB enrichment.',
     resources: ['catalog', 'stream', 'meta'],
@@ -37,11 +37,9 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
     let metas = [];
 
     if (searchTerm) {
-        // If a search term exists, use the search function
         console.log(`[ADDON] Handling search request for "${searchTerm}" in ${lang}`);
         metas = await searchMovies(lang, searchTerm);
     } else {
-        // Otherwise, serve the standard catalog with pagination
         const skip = parseInt(extra.skip || '0', 10);
         const limit = 30;
         console.log(`[ADDON] Serving catalog for ${lang} from database (skip: ${skip})`);
@@ -82,8 +80,10 @@ builder.defineStreamHandler(async ({ type, id }) => {
         return { streams: [] };
     }
     
-    // R2: Pass the `is_uhd` flag from the metadata to the stream fetcher.
-    const streams = await getStreamUrls(movie.movie_page_url, movie.is_uhd);
+    // ** THE FIX IS HERE **
+    // Pass the entire 'movie' meta object to the stream generator.
+    // This guarantees all necessary data (like is_uhd) is available.
+    const streams = await getStreamUrls(movie);
     return { streams };
 });
 
