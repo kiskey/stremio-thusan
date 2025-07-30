@@ -57,12 +57,21 @@ async function scrapePage(lang, pageNum) {
                 const listItem = $(el);
                 const title = listItem.find('.block2 h3').text().trim();
                 const href = listItem.find('.block1 a').attr('href');
+
                 if (title && href) {
                     const idMatch = href.match(/\/watch\/([a-zA-Z0-9.-]+)\//);
                     if (idMatch) {
                         const movieId = idMatch[1];
                         const poster = listItem.find('.block1 img').attr('src');
                         const yearText = listItem.find('.info p').first().text();
+                        
+                        // R1: Parse the publication timestamp from the <time> tag's datetime attribute.
+                        const publishedAtRaw = listItem.find('time').attr('datetime');
+                        const publishedAt = publishedAtRaw ? new Date(publishedAtRaw) : null;
+
+                        // R2: Check for the existence of the UltraHD icon.
+                        const isUhd = listItem.find('i.ultrahd').length > 0;
+
                         movies.push({
                             id: `${ID_PREFIX}:${lang}:${movieId}`, lang, title,
                             year: yearText ? parseInt(yearText.match(/\d{4}/)?.[0], 10) : null,
@@ -71,6 +80,8 @@ async function scrapePage(lang, pageNum) {
                             description: listItem.find('p.synopsis').text().trim(),
                             director: listItem.find('.professionals .prof:contains("Director") p').text().trim() || null,
                             cast: listItem.find('.professionals .prof:not(:contains("Director")) p').map((i, el) => $(el).text().trim()).get(),
+                            published_at: publishedAt,
+                            is_uhd: isUhd
                         });
                     }
                 }
