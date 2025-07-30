@@ -14,7 +14,7 @@ const LANGUAGES = [
 
 const manifest = {
     id: 'org.einthusan.stremio.db',
-    version: '7.0.0', // Final definitive version
+    version: '8.0.0', // Definitive version with correct ID and aggregation handling
     name: 'Einthusan (DB)',
     description: 'A persistent, database-backed addon for Einthusan with background scraping and TMDB enrichment.',
     resources: ['catalog', 'stream', 'meta'],
@@ -54,11 +54,11 @@ builder.defineMetaHandler(async ({ type, id }) => {
     
     let result;
     if (id.startsWith('tt')) {
-        // This is a pure IMDb ID lookup from another addon or search.
+        // This handles a pure IMDb ID lookup from another addon or global search.
         console.log(`[ADDON] Pure IMDb ID detected for meta. Looking up best match: ${id}`);
         result = await getMovieByImdbId(id);
     } else {
-        // This is our internal ID.
+        // This handles a request for one of our specific internal IDs.
         result = await getMovieForMeta(id);
     }
 
@@ -68,10 +68,11 @@ builder.defineMetaHandler(async ({ type, id }) => {
 builder.defineStreamHandler(async ({ type, id }) => {
     console.log(`[ADDON] Fetching streams for ID: ${id}`);
     
+    // This logic is now simple and correct. The 'id' received here is always
+    // the specific, context-aware ID we need, because it comes from either:
+    // a) Our addon's meta object, where the primary 'id' is our internal ID.
+    // b) A lookup from another addon, where the 'id' is an IMDb ID.
     let result;
-    // Since the video.id from our addon is 'ein:...', this logic path will be
-    // correctly followed for all items selected from our addon.
-    // The 'tt' path will only be used for lookups originating from other addons.
     if (id.startsWith('tt')) {
         console.log(`[ADDON] Pure IMDb ID detected for stream. Looking up best match: ${id}`);
         result = await getMovieByImdbId(id);
@@ -80,23 +81,15 @@ builder.defineStreamHandler(async ({ type, id }) => {
         result = await getMovieForMeta(id);
     }
     
-    // The movie object retrieved via getMovieForMeta contains the correct context.
-    // We need to extract the actual movie data, which is now inside the 'meta' property
-    // of the result object from the database functions.
-    const movieData = result ? result.meta : null;
+    const movie = result.meta;
 
-    if (!movieData || !movieData.movie_page_url) {
-        // Since getMovieForMeta now returns an object with a 'meta' key, we need to extract that
-        // to get to the actual movie page URL.
-        const metaFromDb = result ? result.meta : null;
-        if (!metaFromDb || !metaFromDb.movie_page_url) {
-            console.error(`[ADDON] Could not find movie page URL for ID: ${id}`);
-            return { streams: [] };
-        }
+    if (!movie || !movie.movie_page_url) {
+        console.error(`[ADDON] Could not find movie page URL for ID: ${id}`);
+        return { streams: [] };
     }
     
-    // Pass the actual movie object to getStreamUrls
-    const streams = await getStreamUrls(movieData);
+    // The 'movie' object is now guaranteed to be the correct one from the user's selection.
+    const streams = await getStreamUrls(movie);
     return { streams };
 });
 
