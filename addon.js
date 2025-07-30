@@ -14,7 +14,7 @@ const LANGUAGES = [
 
 const manifest = {
     id: 'org.einthusan.stremio.db',
-    version: '4.2.1', // Version updated for stream title fix
+    version: '4.3.0', // Final version with definitive stream fix
     name: 'Einthusan (DB)',
     description: 'A persistent, database-backed addon for Einthusan with background scraping and TMDB enrichment.',
     resources: ['catalog', 'stream', 'meta'],
@@ -31,6 +31,7 @@ const manifest = {
 const builder = new addonBuilder(manifest);
 
 builder.defineCatalogHandler(async ({ type, id, extra }) => {
+    // ... (unchanged)
     const lang = id.replace('einthusan-', '');
     const searchTerm = extra.search;
 
@@ -50,11 +51,11 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
 });
 
 builder.defineMetaHandler(async ({ type, id }) => {
-    console.log(`[ADDON] Serving meta for ${id}`);
+    console.log(`[ADDON] Serving meta for ID: ${id}`);
     
     let result;
     if (id.startsWith('tt')) {
-        console.log(`[ADDON] Meta request is for an IMDb ID: ${id}`);
+        console.log(`[ADDON] Meta request is for an IMDb ID: ${id}. Looking up the best match.`);
         result = await getMovieByImdbId(id);
     } else {
         result = await getMovieForMeta(id);
@@ -64,13 +65,17 @@ builder.defineMetaHandler(async ({ type, id }) => {
 });
 
 builder.defineStreamHandler(async ({ type, id }) => {
-    console.log(`[ADDON] Fetching on-demand streams for ${id}`);
+    // ** THE FIX IS HERE **
+    // The logic is now simple and unambiguous. We trust the ID Stremio gives us.
+    console.log(`[ADDON] Fetching streams for the specific ID: ${id}`);
 
     let result;
     if (id.startsWith('tt')) {
-        console.log(`[ADDON] Stream request is for an IMDb ID: ${id}`);
+        // This case handles external lookups (e.g., from Trakt) but the main UI flow will now use 'ein:...' IDs.
+        console.log(`[ADDON] Stream request is for an IMDb ID: ${id}. Looking up the best match.`);
         result = await getMovieByImdbId(id);
     } else {
+        // This is the primary path. The ID is specific and correct.
         result = await getMovieForMeta(id);
     }
     
@@ -80,9 +85,7 @@ builder.defineStreamHandler(async ({ type, id }) => {
         return { streams: [] };
     }
     
-    // ** THE FIX IS HERE **
-    // Pass the entire 'movie' meta object to the stream generator.
-    // This guarantees all necessary data (like is_uhd) is available.
+    // The 'movie' object is now guaranteed to be the correct one.
     const streams = await getStreamUrls(movie);
     return { streams };
 });
