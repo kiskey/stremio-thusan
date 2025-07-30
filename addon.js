@@ -14,7 +14,7 @@ const LANGUAGES = [
 
 const manifest = {
     id: 'org.einthusan.stremio.db',
-    version: '4.3.0', // Final version with definitive stream fix
+    version: '5.0.0', // Final, robust version with Hybrid IDs
     name: 'Einthusan (DB)',
     description: 'A persistent, database-backed addon for Einthusan with background scraping and TMDB enrichment.',
     resources: ['catalog', 'stream', 'meta'],
@@ -31,7 +31,6 @@ const manifest = {
 const builder = new addonBuilder(manifest);
 
 builder.defineCatalogHandler(async ({ type, id, extra }) => {
-    // ... (unchanged)
     const lang = id.replace('einthusan-', '');
     const searchTerm = extra.search;
 
@@ -53,11 +52,21 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
 builder.defineMetaHandler(async ({ type, id }) => {
     console.log(`[ADDON] Serving meta for ID: ${id}`);
     
+    // The meta handler now also parses the hybrid ID to fetch the specific record.
+    const idParts = id.split(':');
     let result;
-    if (id.startsWith('tt')) {
-        console.log(`[ADDON] Meta request is for an IMDb ID: ${id}. Looking up the best match.`);
+
+    if (id.startsWith('tt') && idParts.length > 1) {
+        // This is a Hybrid ID like 'tt12345:ein:lang:id'. We use the internal part.
+        const internalId = idParts.slice(1).join(':');
+        console.log(`[ADDON] Hybrid ID detected. Using internal ID for meta: ${internalId}`);
+        result = await getMovieForMeta(internalId);
+    } else if (id.startsWith('tt')) {
+        // This is a pure IMDb ID lookup.
+        console.log(`[ADDON] Pure IMDb ID detected. Looking up best match: ${id}`);
         result = await getMovieByImdbId(id);
     } else {
+        // This is one of our internal IDs without an IMDb entry.
         result = await getMovieForMeta(id);
     }
 
@@ -65,17 +74,23 @@ builder.defineMetaHandler(async ({ type, id }) => {
 });
 
 builder.defineStreamHandler(async ({ type, id }) => {
-    // ** THE FIX IS HERE **
-    // The logic is now simple and unambiguous. We trust the ID Stremio gives us.
-    console.log(`[ADDON] Fetching streams for the specific ID: ${id}`);
+    console.log(`[ADDON] Fetching streams for ID: ${id}`);
 
+    // The stream handler parses the hybrid ID to get the exact internal ID.
+    const idParts = id.split(':');
     let result;
-    if (id.startsWith('tt')) {
-        // This case handles external lookups (e.g., from Trakt) but the main UI flow will now use 'ein:...' IDs.
-        console.log(`[ADDON] Stream request is for an IMDb ID: ${id}. Looking up the best match.`);
+
+    if (id.startsWith('tt') && idParts.length > 1) {
+        // This is our primary, context-aware path for enriched movies.
+        const internalId = idParts.slice(1).join(':');
+        console.log(`[ADDON] Hybrid ID detected. Using internal ID for stream: ${internalId}`);
+        result = await getMovieForMeta(internalId);
+    } else if (id.startsWith('tt')) {
+        // Fallback for requests from other addons that only know the IMDb ID.
+        console.log(`[ADDON] Pure IMDb ID stream request. Looking up best match: ${id}`);
         result = await getMovieByImdbId(id);
     } else {
-        // This is the primary path. The ID is specific and correct.
+        // Path for unenriched movies.
         result = await getMovieForMeta(id);
     }
     
@@ -85,7 +100,6 @@ builder.defineStreamHandler(async ({ type, id }) => {
         return { streams: [] };
     }
     
-    // The 'movie' object is now guaranteed to be the correct one.
     const streams = await getStreamUrls(movie);
     return { streams };
 });
