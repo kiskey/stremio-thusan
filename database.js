@@ -5,6 +5,7 @@ let pool = null;
 const ADDON_DB_NAME = 'stremio_addons';
 const SCHEMA_NAME = 'einthusan';
 
+// ... (migration and initialization functions remain unchanged) ...
 async function migrateDatabaseSchema() {
     const client = await pool.connect();
     try {
@@ -144,7 +145,6 @@ async function upsertMovie(movie) {
 }
 
 async function getMoviesForCatalog(lang, skip, limit) {
-    // R1: Add 'NULLS LAST' to ensure movies without a timestamp are sorted to the end.
     const query = `
         SELECT id, title AS name, poster, year FROM ${SCHEMA_NAME}.movies
         WHERE lang = $1 ORDER BY published_at DESC NULLS LAST, title ASC LIMIT $2 OFFSET $3;
@@ -165,37 +165,51 @@ async function searchMovies(lang, searchTerm) {
     return res.rows.map(row => ({ ...row, type: 'movie' }));
 }
 
+
 async function getMovieForMeta(id) {
     const query = `SELECT * FROM ${SCHEMA_NAME}.movies WHERE id = $1;`;
     const res = await pool.query(query, [id]);
     if (res.rows.length > 0) {
         const movie = res.rows[0];
-        return {
-            meta: {
-                id: movie.imdb_id || movie.id,
-                type: 'movie',
-                name: movie.title,
-                poster: movie.poster,
-                background: movie.poster,
-                description: movie.description,
-                year: movie.year,
-                movie_page_url: movie.movie_page_url,
-                is_uhd: movie.is_uhd,
-            }
+        const meta = {
+            // ** THE FIX IS HERE **
+            // The primary 'id' is ALWAYS our internal, unique ID.
+            id: movie.id, 
+            type: 'movie',
+            name: movie.title,
+            poster: movie.poster,
+            background: movie.poster,
+            description: movie.description,
+            year: movie.year,
+            movie_page_url: movie.movie_page_url,
+            is_uhd: movie.is_uhd,
         };
+
+        // Provide imdb_id as supplementary data for Stremio, not as the primary ID.
+        if (movie.imdb_id) {
+            meta.imdb_id = movie.imdb_id;
+        }
+
+        return { meta };
     }
     return { meta: null };
 }
 
 async function getMovieByImdbId(imdbId) {
-    const query = `SELECT * FROM ${SCHEMA_NAME}.movies WHERE imdb_id = $1 LIMIT 1;`;
+    const query = `
+        SELECT * FROM ${SCHEMA_NAME}.movies 
+        WHERE imdb_id = $1 
+        ORDER BY is_uhd DESC, published_at DESC NULLS LAST 
+        LIMIT 1;
+    `;
     const res = await pool.query(query, [imdbId]);
     if (res.rows.length > 0) {
+        // This function will now return the full, correctly structured meta object.
         return getMovieForMeta(res.rows[0].id);
     }
     return { meta: null };
 }
-
+// ... (rest of the file is unchanged) ...
 async function getScrapeProgress(lang) {
     const query = `SELECT last_page_scraped, full_scrape_completed FROM ${SCHEMA_NAME}.scrape_progress WHERE lang = $1;`;
     const res = await pool.query(query, [lang]);
