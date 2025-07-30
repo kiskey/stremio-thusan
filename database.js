@@ -42,6 +42,31 @@ async function migrateDatabaseSchema() {
             console.log('[DB MIGRATION] Scrape progress schema is up to date.');
         }
 
+        // R1 & R2: Add columns for published_at and is_uhd for catalog ordering and quality indication.
+        console.log('[DB MIGRATION] Checking schema for catalog enhancement columns (published_at, is_uhd)...');
+        const checkCatalogCols = await client.query(`
+            SELECT column_name FROM information_schema.columns 
+            WHERE table_schema = '${SCHEMA_NAME}' 
+            AND table_name = 'movies' 
+            AND column_name IN ('published_at', 'is_uhd')
+        `);
+
+        const existingCols = checkCatalogCols.rows.map(r => r.column_name);
+        if (!existingCols.includes('published_at')) {
+            console.log('[DB MIGRATION] Adding "published_at" column to movies table...');
+            await client.query(`ALTER TABLE ${SCHEMA_NAME}.movies ADD COLUMN published_at TIMESTAMPTZ;`);
+            console.log('[DB MIGRATION] "published_at" column added.');
+        }
+        if (!existingCols.includes('is_uhd')) {
+            console.log('[DB MIGRATION] Adding "is_uhd" column to movies table...');
+            await client.query(`ALTER TABLE ${SCHEMA_NAME}.movies ADD COLUMN is_uhd BOOLEAN NOT NULL DEFAULT FALSE;`);
+            console.log('[DB MIGRATION] "is_uhd" column added.');
+        }
+        
+        if (existingCols.length === 2) {
+            console.log('[DB MIGRATION] Catalog enhancement columns are up to date.');
+        }
+
     } finally {
         client.release();
     }
@@ -79,7 +104,9 @@ async function initializeDatabase() {
                 poster TEXT,
                 description TEXT,
                 movie_page_url TEXT,
-                last_scraped_at TIMESTAMPTZ DEFAULT NOW()
+                last_scraped_at TIMESTAMPTZ DEFAULT NOW(),
+                published_at TIMESTAMPTZ, -- R1: Store publication timestamp
+                is_uhd BOOLEAN NOT NULL DEFAULT FALSE -- R2: Store UltraHD availability
             );
         `);
         
@@ -98,27 +125,31 @@ async function initializeDatabase() {
 }
 
 async function upsertMovie(movie) {
+    // R1, R2: Update query to handle new `published_at` and `is_uhd` fields.
     const query = `
-        INSERT INTO ${SCHEMA_NAME}.movies (id, lang, title, year, poster, description, movie_page_url, last_scraped_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+        INSERT INTO ${SCHEMA_NAME}.movies (id, lang, title, year, poster, description, movie_page_url, published_at, is_uhd, last_scraped_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
         ON CONFLICT (id) DO UPDATE SET
             title = EXCLUDED.title,
             year = EXCLUDED.year,
             poster = EXCLUDED.poster,
             description = EXCLUDED.description,
+            published_at = EXCLUDED.published_at,
+            is_uhd = EXCLUDED.is_uhd,
             last_scraped_at = NOW();
     `;
     const values = [
         movie.id, movie.lang, movie.title, movie.year, movie.poster,
-        movie.description, movie.movie_page_url
+        movie.description, movie.movie_page_url, movie.published_at, movie.is_uhd
     ];
     await pool.query(query, values).catch(err => console.error(`[DB] Error upserting movie ${movie.title}:`, err));
 }
 
 async function getMoviesForCatalog(lang, skip, limit) {
+    // R1: Order by the new `published_at` column for most recent first.
     const query = `
         SELECT id, title AS name, poster, year FROM ${SCHEMA_NAME}.movies
-        WHERE lang = $1 ORDER BY last_scraped_at DESC, title ASC LIMIT $2 OFFSET $3;
+        WHERE lang = $1 ORDER BY published_at DESC, title ASC LIMIT $2 OFFSET $3;
     `;
     const res = await pool.query(query, [lang, limit, skip]);
     return res.rows.map(row => ({ ...row, type: 'movie' }));
@@ -151,6 +182,7 @@ async function getMovieForMeta(id) {
                 description: movie.description,
                 year: movie.year,
                 movie_page_url: movie.movie_page_url,
+                is_uhd: movie.is_uhd, // R2: Pass UHD flag to the addon interface
             }
         };
     }
