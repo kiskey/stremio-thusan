@@ -47,7 +47,6 @@ async function getAuthenticatedClient() {
     try {
         const loginPageRes = await client.get(`${BASE_URL}/login/`);
         const $ = cheerio.load(loginPageRes.data);
-        //const csrfToken = $('html').attr('data-pageid')?.replace(/\+/g, '+');
         const csrfToken = $('html').attr('data-pageid'); 
 
         if (!csrfToken) throw new Error('Could not find CSRF token on the login page.');
@@ -88,7 +87,6 @@ async function getAuthenticatedClient() {
     return client;
 }
 
-// R2: Update function to accept the isUhd flag to customize stream titles.
 async function fetchStream(client, moviePageUrl, quality, isUhd = false) {
     console.log(`[STREAMER] Attempting to fetch ${quality} stream from: ${moviePageUrl}`);
     
@@ -99,27 +97,21 @@ async function fetchStream(client, moviePageUrl, quality, isUhd = false) {
     try {
         const pageResponse = await client.get(urlToVisit);
         const $ = cheerio.load(pageResponse.data);
-
         const videoPlayerSection = $('#UIVideoPlayer');
-        
-        // --- THE DEFINITIVE FIX IS HERE ---
-        // We now prioritize 'data-mp4-link' exactly like the working script.
         const mp4Link = videoPlayerSection.attr('data-mp4-link');
         
         if (mp4Link) {
             console.log(`[STREAMER] Successfully found direct MP4 link for ${quality}.`);
-            // R2: Add UHD indicator to the stream title if applicable.
+            // R2 (FIXED): Correctly build the stream title.
             let streamTitle = `Einthusan ${quality}`;
-            if (quality === 'HD' && isUhd) {
-                streamTitle = `UHD 💎 Einthusan HD`;
+            if (quality === 'HD' && isUhd === true) {
+                streamTitle = `UHD 💎 ${streamTitle}`;
             }
             return { title: streamTitle, url: mp4Link };
         }
 
-        // Fallback to the AJAX method only if the direct link is not present.
         console.log(`[STREAMER] No direct MP4 link found. Falling back to AJAX method for ${quality}.`);
         const ejp = videoPlayerSection.attr('data-ejpingables');
-        //const csrfToken = $('html').attr('data-pageid')?.replace(/\+/g, '+');
         const csrfToken = $('html').attr('data-pageid'); 
 
         if (!ejp || !csrfToken) {
@@ -145,10 +137,10 @@ async function fetchStream(client, moviePageUrl, quality, isUhd = false) {
             const streamData = JSON.parse(decodedLnk);
             if (streamData.HLSLink) {
                 console.log(`[STREAMER] Successfully found AJAX HLS link for ${quality}.`);
-                // R2: Add UHD indicator to the stream title if applicable.
+                // R2 (FIXED): Correctly build the stream title for the fallback method.
                 let streamTitle = `Einthusan ${quality} (AJAX)`;
-                if (quality === 'HD' && isUhd) {
-                    streamTitle = `UHD 💎 Einthusan HD (AJAX)`;
+                if (quality === 'HD' && isUhd === true) {
+                    streamTitle = `UHD 💎 ${streamTitle}`;
                 }
                 return { title: streamTitle, url: streamData.HLSLink };
             }
@@ -159,21 +151,21 @@ async function fetchStream(client, moviePageUrl, quality, isUhd = false) {
     return null;
 }
 
-// R2: Update function signature to accept the `isUhd` flag.
 async function getStreamUrls(moviePageUrl, isUhd = false) {
+    // Add diagnostic logging to confirm the flag is received.
+    console.log(`[AUTH] getStreamUrls received call. isUhd: ${isUhd}`);
+    
     const streams = [];
     const client = await getAuthenticatedClient();
 
     if (isAuthenticated) {
-        // R2: Pass the isUhd flag to the HD stream fetcher.
         let hdStream = await fetchStream(client, moviePageUrl, 'HD', isUhd);
         if (hdStream) {
             streams.push(replaceIpInStreamUrl(hdStream));
         }
     }
     
-    // SD stream never has UHD, so no flag is passed.
-    let sdStream = await fetchStream(client, moviePageUrl, 'SD');
+    let sdStream = await fetchStream(client, moviePageUrl, 'SD', false); // SD is never UHD
     if (sdStream) {
         sdStream = replaceIpInStreamUrl(sdStream);
         if (!streams.find(s => s.url === sdStream.url)) {
