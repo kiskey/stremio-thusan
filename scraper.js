@@ -65,12 +65,17 @@ async function scrapePage(lang, pageNum) {
                         const poster = listItem.find('.block1 img').attr('src');
                         const yearText = listItem.find('.info p').first().text();
                         
-                        // R1: Parse the publication timestamp from the <time> tag's datetime attribute.
                         const publishedAtRaw = listItem.find('time').attr('datetime');
                         const publishedAt = publishedAtRaw ? new Date(publishedAtRaw) : null;
 
-                        // R2: Check for the existence of the UltraHD icon.
                         const isUhd = listItem.find('i.ultrahd').length > 0;
+
+                        // R1, R2: Add diagnostic logging to verify parsing.
+                        if (!publishedAtRaw) {
+                            console.log(`[SCRAPER PARSE] WARN: No timestamp found for "${title}"`);
+                        } else {
+                             console.log(`[SCRAPER PARSE] OK: Parsed for "${title}" -> Timestamp: ${publishedAtRaw}, UHD: ${isUhd}`);
+                        }
 
                         movies.push({
                             id: `${ID_PREFIX}:${lang}:${movieId}`, lang, title,
