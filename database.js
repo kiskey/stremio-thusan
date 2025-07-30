@@ -145,38 +145,34 @@ async function upsertMovie(movie) {
     await pool.query(query, values).catch(err => console.error(`[DB] Error upserting movie ${movie.title}:`, err));
 }
 
+/**
+ * A centralized function to build a Stremio Meta Object from a database row.
+ * This is the definitive, SDK-compliant way to structure the object.
+ * @param {object} movie - A movie record from the database.
+ * @returns {object} A Stremio Meta Object.
+ */
 function buildMeta(movie) {
     if (!movie) return null;
 
-    // Use the IMDb ID for aggregation if it exists, otherwise use our internal ID.
-    const universalId = movie.imdb_id || movie.id;
-
-    // The name can be enriched to show context to the user in the UI.
-    const displayName = movie.lang ? `${movie.name || movie.title} (${movie.lang.charAt(0).toUpperCase() + movie.lang.slice(1)})` : (movie.name || movie.title);
-
     const meta = {
-        id: universalId,
+        // The primary 'id' is ALWAYS our internal, unique ID. This preserves context.
+        id: movie.id,
         type: 'movie',
-        name: displayName,
+        name: movie.name || movie.title,
         poster: movie.poster,
         background: movie.poster,
         description: movie.description,
         year: movie.year,
-        // ** THE FIX IS HERE **
-        // We create a 'videos' array containing one video object.
-        // The ID of this video object is our internal, context-specific ID.
-        // Stremio will use THIS ID when requesting streams from our addon.
-        videos: [{
-            id: movie.id,
-            title: movie.name || movie.title,
-            released: movie.published_at || new Date(movie.year, 0, 1).toISOString(),
-        }]
+        // ** REGRESSION FIX **: Ensure all necessary fields for the stream handler are included.
+        movie_page_url: movie.movie_page_url,
+        is_uhd: movie.is_uhd,
     };
 
-    // For movies without an IMDb ID, we don't need to add the video array
-    // because the meta.id is already our unique internal ID.
-    if (!movie.imdb_id) {
-        delete meta.videos;
+    // ** THE FIX IS HERE **
+    // We add 'imdb_id' as a separate, top-level property.
+    // Stremio's aggregator is built to look for this specific property.
+    if (movie.imdb_id) {
+        meta.imdb_id = movie.imdb_id;
     }
 
     return meta;
@@ -184,16 +180,17 @@ function buildMeta(movie) {
 
 async function getMoviesForCatalog(lang, skip, limit) {
     const query = `
-        SELECT id, imdb_id, lang, title AS name, year, poster, description, published_at FROM ${SCHEMA_NAME}.movies
+        SELECT * FROM ${SCHEMA_NAME}.movies
         WHERE lang = $1 ORDER BY published_at DESC NULLS LAST, title ASC LIMIT $2 OFFSET $3;
     `;
     const res = await pool.query(query, [lang, limit, skip]);
+    // Map each database row to a correctly structured meta object.
     return res.rows.map(buildMeta);
 }
 
 async function searchMovies(lang, searchTerm) {
     const query = `
-        SELECT id, imdb_id, lang, title AS name, year, poster, description, published_at FROM ${SCHEMA_NAME}.movies
+        SELECT * FROM ${SCHEMA_NAME}.movies
         WHERE lang = $1 AND title ILIKE $2
         ORDER BY year DESC, title ASC
         LIMIT 50;
@@ -204,8 +201,7 @@ async function searchMovies(lang, searchTerm) {
 }
 
 async function getMovieForMeta(id) {
-    // This function can now be simpler. It just fetches the specific record.
-    const query = `SELECT *, title as name FROM ${SCHEMA_NAME}.movies WHERE id = $1;`;
+    const query = `SELECT * FROM ${SCHEMA_NAME}.movies WHERE id = $1;`;
     const res = await pool.query(query, [id]);
     if (res.rows.length > 0) {
         return { meta: buildMeta(res.rows[0]) };
@@ -214,15 +210,15 @@ async function getMovieForMeta(id) {
 }
 
 async function getMovieByImdbId(imdbId) {
-    // This function finds the best match for a given IMDb ID.
     const query = `
-        SELECT *, title as name FROM ${SCHEMA_NAME}.movies 
+        SELECT * FROM ${SCHEMA_NAME}.movies 
         WHERE imdb_id = $1 
         ORDER BY is_uhd DESC, published_at DESC NULLS LAST 
         LIMIT 1;
     `;
     const res = await pool.query(query, [imdbId]);
     if (res.rows.length > 0) {
+        // This function will now return the full, correctly structured meta object.
         return { meta: buildMeta(res.rows[0]) };
     }
     return { meta: null };
