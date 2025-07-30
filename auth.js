@@ -88,7 +88,8 @@ async function getAuthenticatedClient() {
     return client;
 }
 
-async function fetchStream(client, moviePageUrl, quality) {
+// R2: Update function to accept the isUhd flag to customize stream titles.
+async function fetchStream(client, moviePageUrl, quality, isUhd = false) {
     console.log(`[STREAMER] Attempting to fetch ${quality} stream from: ${moviePageUrl}`);
     
     const usePremiumUrl = quality === 'HD' && isAuthenticated;
@@ -107,7 +108,12 @@ async function fetchStream(client, moviePageUrl, quality) {
         
         if (mp4Link) {
             console.log(`[STREAMER] Successfully found direct MP4 link for ${quality}.`);
-            return { title: `Einthusan ${quality}`, url: mp4Link };
+            // R2: Add UHD indicator to the stream title if applicable.
+            let streamTitle = `Einthusan ${quality}`;
+            if (quality === 'HD' && isUhd) {
+                streamTitle = `UHD 💎 Einthusan HD`;
+            }
+            return { title: streamTitle, url: mp4Link };
         }
 
         // Fallback to the AJAX method only if the direct link is not present.
@@ -139,8 +145,12 @@ async function fetchStream(client, moviePageUrl, quality) {
             const streamData = JSON.parse(decodedLnk);
             if (streamData.HLSLink) {
                 console.log(`[STREAMER] Successfully found AJAX HLS link for ${quality}.`);
-                // Note: The AJAX method seems to return an HLS link. We will use it as a last resort.
-                return { title: `Einthusan ${quality} (AJAX)`, url: streamData.HLSLink };
+                // R2: Add UHD indicator to the stream title if applicable.
+                let streamTitle = `Einthusan ${quality} (AJAX)`;
+                if (quality === 'HD' && isUhd) {
+                    streamTitle = `UHD 💎 Einthusan HD (AJAX)`;
+                }
+                return { title: streamTitle, url: streamData.HLSLink };
             }
         }
     } catch (error) {
@@ -149,17 +159,20 @@ async function fetchStream(client, moviePageUrl, quality) {
     return null;
 }
 
-async function getStreamUrls(moviePageUrl) {
+// R2: Update function signature to accept the `isUhd` flag.
+async function getStreamUrls(moviePageUrl, isUhd = false) {
     const streams = [];
     const client = await getAuthenticatedClient();
 
     if (isAuthenticated) {
-        let hdStream = await fetchStream(client, moviePageUrl, 'HD');
+        // R2: Pass the isUhd flag to the HD stream fetcher.
+        let hdStream = await fetchStream(client, moviePageUrl, 'HD', isUhd);
         if (hdStream) {
             streams.push(replaceIpInStreamUrl(hdStream));
         }
     }
     
+    // SD stream never has UHD, so no flag is passed.
     let sdStream = await fetchStream(client, moviePageUrl, 'SD');
     if (sdStream) {
         sdStream = replaceIpInStreamUrl(sdStream);
