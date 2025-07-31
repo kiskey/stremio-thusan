@@ -8,10 +8,61 @@ const BASE_URL = process.env.BASE_URL || 'https://einthusan.tv';
 const PREMIUM_USERNAME = process.env.EINTHUSAN_USERNAME;
 const PREMIUM_PASSWORD = process.env.EINTHUSAN_PASSWORD;
 
-const jar = new CookieJar();
-const client = wrapper(axios.create({ jar }));
+// This is the non-authenticated client, primarily for SD streams.
+const mainClient = wrapper(axios.create());
 
 let isAuthenticated = false;
+
+// R4: This function creates a fresh, authenticated session for a single premium use.
+async function createPremiumSession() {
+    if (!PREMIUM_USERNAME || !PREMIUM_PASSWORD) {
+        console.error('[AUTH-SESSION] Cannot create premium session: credentials not set.');
+        return null;
+    }
+
+    console.log('[AUTH-SESSION] Creating new, isolated premium session...');
+    const tempJar = new CookieJar();
+    const tempClient = wrapper(axios.create({ jar: tempJar }));
+
+    try {
+        const loginPageRes = await tempClient.get(`${BASE_URL}/login/`);
+        const $ = cheerio.load(loginPageRes.data);
+        const csrfToken = $('html').attr('data-pageid');
+
+        if (!csrfToken) throw new Error('Could not find CSRF token for new session.');
+
+        const loginPayload = new URLSearchParams({
+            'xEvent': 'Login',
+            'xJson': JSON.stringify({ Email: PREMIUM_USERNAME, Password: PREMIUM_PASSWORD }),
+            'tabID': 'vwmSPyo0giMK9nETr0vMMrE/dIBvZQ6a11v+i2kVk6/t7UCLFWORSxePRTDTpRTAeuu/D/9t32a7lO3aJNo7EA==25',
+            'gorilla.csrf.Token': csrfToken,
+        });
+
+        const loginRes = await tempClient.post(`${BASE_URL}/ajax/login/`, loginPayload.toString(), {
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                'X-Requested-With': 'XMLHttpRequest',
+                'Origin': BASE_URL,
+                'Referer': `${BASE_URL}/login/`,
+            },
+        });
+
+        if (loginRes.data?.Event !== 'redirect' && loginRes.data?.Message !== 'success') {
+            throw new Error('New session login failed. Please check credentials.');
+        }
+
+        if (loginRes.data.Data) {
+            await tempClient.get(`${BASE_URL}${loginRes.data.Data}`);
+        }
+        
+        console.log('[AUTH-SESSION] New premium session successfully created and authenticated.');
+        return tempClient;
+
+    } catch (error) {
+        console.error(`[AUTH-SESSION] A fatal error occurred during isolated login: ${error.message}`);
+        return null;
+    }
+}
 
 function replaceIpInStreamUrl(streamInfo) {
     if (!streamInfo || !streamInfo.url) return streamInfo;
@@ -30,90 +81,78 @@ function decodeEinth(lnk) {
     return lnk.slice(0, t) + lnk.slice(-1) + lnk.slice(t + 2, -1);
 }
 
+// This function now only serves to check if credentials exist.
 async function initializeAuth() {
-    console.log('[AUTH] Initializing authentication module...');
-    await getAuthenticatedClient();
-    console.log('[AUTH] Authentication module ready.');
-}
-
-async function getAuthenticatedClient() {
-    if (isAuthenticated) return client;
-    if (!PREMIUM_USERNAME || !PREMIUM_PASSWORD) {
-        console.log('[AUTH] No premium credentials. Using a non-logged-in client.');
-        return client;
-    }
-
-    console.log('[AUTH] Attempting premium login...');
-    try {
-        const loginPageRes = await client.get(`${BASE_URL}/login/`);
-        const $ = cheerio.load(loginPageRes.data);
-        const csrfToken = $('html').attr('data-pageid'); 
-
-        if (!csrfToken) throw new Error('Could not find CSRF token on the login page.');
-        console.log('[AUTH] Successfully retrieved CSRF token.');
-
-        const loginPayload = new URLSearchParams({
-            'xEvent': 'Login',
-            'xJson': JSON.stringify({ Email: PREMIUM_USERNAME, Password: PREMIUM_PASSWORD }),
-            'tabID': 'vwmSPyo0giMK9nETr0vMMrE/dIBvZQ6a11v+i2kVk6/t7UCLFWORSxePRTDTpRTAeuu/D/9t32a7lO3aJNo7EA==25',
-            'gorilla.csrf.Token': csrfToken,
-        });
-
-        const loginRes = await client.post(`${BASE_URL}/ajax/login/`, loginPayload.toString(), {
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                'X-Requested-With': 'XMLHttpRequest',
-                'Origin': BASE_URL,
-                'Referer': `${BASE_URL}/login/`,
-            },
-        });
-
-        if (loginRes.data?.Event !== 'redirect' && loginRes.data?.Message !== 'success') {
-            throw new Error('Login failed. Server response did not indicate success. Please check credentials.');
-        }
-
-        if (loginRes.data.Data) {
-            console.log('[AUTH] Login successful, finalizing session...');
-            await client.get(`${BASE_URL}${loginRes.data.Data}`);
-        }
-        
-        console.log('[AUTH] Client is now fully authenticated.');
+    console.log('[AUTH] Checking for premium credentials...');
+    if (PREMIUM_USERNAME && PREMIUM_PASSWORD) {
         isAuthenticated = true;
-
-    } catch (error) {
-        console.error(`[AUTH] A fatal error occurred during login: ${error.message}`);
+        console.log('[AUTH] Premium credentials found. HD streaming is enabled.');
+    } else {
+        console.log('[AUTH] No premium credentials found. HD streaming is disabled.');
     }
-    
-    return client;
 }
 
-// ** THE FIX IS HERE **
-// This function now accepts the full 'movie' object.
-async function fetchStream(client, movie, quality) {
-    // Extract properties from the object for robustness.
+// R4: This function is the new unified controller for fetching all streams.
+async function fetchStream(movie, quality) {
     const { movie_page_url, is_uhd } = movie;
     
-    console.log(`[STREAMER] Attempting to fetch ${quality} stream for "${movie.name}". UHD flag: ${is_uhd}`);
+    // R4: A premium request is any HD request when credentials are available.
+    const isPremiumRequest = quality === 'HD' && isAuthenticated;
     
-    const usePremiumUrl = quality === 'HD' && isAuthenticated;
-    const urlToVisit = usePremiumUrl ? movie_page_url.replace('/movie/', '/premium/movie/') : movie_page_url;
+    let clientToUse;
+    let urlToVisit;
+
+    if (isPremiumRequest) {
+        const qualityLabel = is_uhd ? 'UHD' : 'HD';
+        console.log(`[STREAMER] Premium request detected for "${movie.name}". Quality: ${qualityLabel}. Initiating new session.`);
+        clientToUse = await createPremiumSession();
+        
+        if (!clientToUse) {
+            console.error(`[STREAMER] Could not create premium session for "${movie.name}". Aborting.`);
+            return null;
+        }
+
+        const pageUrl = new URL(movie_page_url);
+        pageUrl.pathname = pageUrl.pathname.replace('/movie/', '/premium/movie/');
+        if (is_uhd) {
+            pageUrl.searchParams.set('uhd', 'true');
+        }
+        urlToVisit = pageUrl.toString();
+    } else {
+        // Standard non-premium (SD) path
+        clientToUse = mainClient;
+        urlToVisit = movie_page_url;
+    }
+
     console.log(`[STREAMER] Visiting URL: ${urlToVisit}`);
 
     try {
-        const pageResponse = await client.get(urlToVisit);
+        const pageResponse = await clientToUse.get(urlToVisit);
         const $ = cheerio.load(pageResponse.data);
+
+        // R4: Mandatory validation for ALL premium requests.
+        if (isPremiumRequest) {
+            const isPremiumPage = $('#html5-player').attr('data-premium') === 'true';
+            if (!isPremiumPage) {
+                console.error(`[STREAMER] ERROR: Page for "${movie.name}" is not a valid premium page as expected. The session may have failed. Aborting.`);
+                return null;
+            }
+            console.log(`[STREAMER] Premium page for "${movie.name}" successfully validated.`);
+        }
+
         const videoPlayerSection = $('#UIVideoPlayer');
         const mp4Link = videoPlayerSection.attr('data-mp4-link');
         
         if (mp4Link) {
             console.log(`[STREAMER] Successfully found direct MP4 link for ${quality}.`);
             let streamTitle = `Einthusan ${quality}`;
-            if (quality === 'HD' && is_uhd === true) {
+            if (is_uhd && quality === 'HD') {
                 streamTitle = `UHD 💎 ${streamTitle}`;
             }
             return { title: streamTitle, url: mp4Link };
         }
 
+        // Fallback logic remains the same.
         console.log(`[STREAMER] No direct MP4 link found. Falling back to AJAX method for ${quality}.`);
         const ejp = videoPlayerSection.attr('data-ejpingables');
         const csrfToken = $('html').attr('data-pageid'); 
@@ -132,7 +171,7 @@ async function fetchStream(client, movie, quality) {
             'gorilla.csrf.Token': csrfToken,
         }).toString();
 
-        const ajaxResponse = await client.post(ajaxUrl, postData, {
+        const ajaxResponse = await clientToUse.post(ajaxUrl, postData, {
             headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest', 'Referer': urlToVisit }
         });
 
@@ -142,7 +181,7 @@ async function fetchStream(client, movie, quality) {
             if (streamData.HLSLink) {
                 console.log(`[STREAMER] Successfully found AJAX HLS link for ${quality}.`);
                 let streamTitle = `Einthusan ${quality} (AJAX)`;
-                if (quality === 'HD' && is_uhd === true) {
+                if (is_uhd && quality === 'HD') {
                     streamTitle = `UHD 💎 ${streamTitle}`;
                 }
                 return { title: streamTitle, url: streamData.HLSLink };
@@ -154,8 +193,6 @@ async function fetchStream(client, movie, quality) {
     return null;
 }
 
-// ** THE FIX IS HERE **
-// This function now accepts the full 'movie' object.
 async function getStreamUrls(movie) {
     if (!movie) {
         console.error("[AUTH] getStreamUrls was called with a null movie object.");
@@ -163,20 +200,20 @@ async function getStreamUrls(movie) {
     }
     
     const streams = [];
-    const client = await getAuthenticatedClient();
 
+    // Only attempt to get HD streams if the user has provided premium credentials.
     if (isAuthenticated) {
-        // Pass the full movie object to the fetcher.
-        let hdStream = await fetchStream(client, movie, 'HD');
+        let hdStream = await fetchStream(movie, 'HD');
         if (hdStream) {
             streams.push(replaceIpInStreamUrl(hdStream));
         }
     }
     
-    // Pass the full movie object to the fetcher (SD is never UHD, logic is handled inside fetchStream).
-    let sdStream = await fetchStream(client, movie, 'SD');
+    // Always attempt to get the SD stream.
+    let sdStream = await fetchStream(movie, 'SD');
     if (sdStream) {
         sdStream = replaceIpInStreamUrl(sdStream);
+        // Avoid adding duplicate URLs if HD and SD point to the same file.
         if (!streams.find(s => s.url === sdStream.url)) {
             streams.push(sdStream);
         }
