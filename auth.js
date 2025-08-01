@@ -8,12 +8,19 @@ const BASE_URL = process.env.BASE_URL || 'https://einthusan.tv';
 const PREMIUM_USERNAME = process.env.EINTHUSAN_USERNAME;
 const PREMIUM_PASSWORD = process.env.EINTHUSAN_PASSWORD;
 
-// This is the non-authenticated client, primarily for SD streams.
+// R10: Map for language codes.
+const LANG_CODES = {
+    tamil: 'TA',
+    malayalam: 'ML',
+    telugu: 'TE',
+    hindi: 'HI',
+    kannada: 'KA',
+};
+
 const mainClient = wrapper(axios.create());
 
 let isAuthenticated = false;
 
-// R4: This function creates a fresh, authenticated session for a single premium use.
 async function createPremiumSession() {
     if (!PREMIUM_USERNAME || !PREMIUM_PASSWORD) {
         console.error('[AUTH-SESSION] Cannot create premium session: credentials not set.');
@@ -81,7 +88,6 @@ function decodeEinth(lnk) {
     return lnk.slice(0, t) + lnk.slice(-1) + lnk.slice(t + 2, -1);
 }
 
-// This function now only serves to check if credentials exist.
 async function initializeAuth() {
     console.log('[AUTH] Checking for premium credentials...');
     if (PREMIUM_USERNAME && PREMIUM_PASSWORD) {
@@ -92,11 +98,10 @@ async function initializeAuth() {
     }
 }
 
-// R4: This function is the new unified controller for fetching all streams.
+// R9 & R10: Modified to accept the full movie object for title formatting.
 async function fetchStream(movie, quality) {
-    const { movie_page_url, is_uhd } = movie;
+    const { movie_page_url, is_uhd, lang, title: movieName } = movie;
     
-    // R4: A premium request is any HD request when credentials are available.
     const isPremiumRequest = quality === 'HD' && isAuthenticated;
     
     let clientToUse;
@@ -119,7 +124,6 @@ async function fetchStream(movie, quality) {
         }
         urlToVisit = pageUrl.toString();
     } else {
-        // Standard non-premium (SD) path
         clientToUse = mainClient;
         urlToVisit = movie_page_url;
     }
@@ -130,7 +134,6 @@ async function fetchStream(movie, quality) {
         const pageResponse = await clientToUse.get(urlToVisit);
         const $ = cheerio.load(pageResponse.data);
 
-        // R4: Mandatory validation for ALL premium requests.
         if (isPremiumRequest) {
             const isPremiumPage = $('#html5-player').attr('data-premium') === 'true';
             if (!isPremiumPage) {
@@ -142,17 +145,18 @@ async function fetchStream(movie, quality) {
 
         const videoPlayerSection = $('#UIVideoPlayer');
         const mp4Link = videoPlayerSection.attr('data-mp4-link');
+
+        // R10: Title formatting logic
+        const langCode = LANG_CODES[lang] || '??';
+        let streamTitle;
         
         if (mp4Link) {
             console.log(`[STREAMER] Successfully found direct MP4 link for ${quality}.`);
-            let streamTitle = `Einthusan ${quality}`;
-            if (is_uhd && quality === 'HD') {
-                streamTitle = `UHD 💎 ${streamTitle}`;
-            }
+            const qualityLabel = (is_uhd && quality === 'HD') ? 'UHD 💎' : quality;
+            streamTitle = `${qualityLabel} - ${langCode} - ${movieName}`;
             return { title: streamTitle, url: mp4Link };
         }
 
-        // Fallback logic remains the same.
         console.log(`[STREAMER] No direct MP4 link found. Falling back to AJAX method for ${quality}.`);
         const ejp = videoPlayerSection.attr('data-ejpingables');
         const csrfToken = $('html').attr('data-pageid'); 
@@ -163,8 +167,8 @@ async function fetchStream(movie, quality) {
         }
 
         const movieId = new URL(movie_page_url).pathname.split('/')[3];
-        const lang = new URL(movie_page_url).searchParams.get('lang');
-        const ajaxUrl = `${BASE_URL}/ajax/movie/watch/${movieId}/?lang=${lang}`;
+        const ajaxLang = new URL(movie_page_url).searchParams.get('lang');
+        const ajaxUrl = `${BASE_URL}/ajax/movie/watch/${movieId}/?lang=${ajaxLang}`;
         const postData = new URLSearchParams({
             'xEvent': 'UIVideoPlayer.PingOutcome',
             'xJson': JSON.stringify({ "EJOutcomes": ejp, "NativeHLS": false }),
@@ -180,10 +184,8 @@ async function fetchStream(movie, quality) {
             const streamData = JSON.parse(decodedLnk);
             if (streamData.HLSLink) {
                 console.log(`[STREAMER] Successfully found AJAX HLS link for ${quality}.`);
-                let streamTitle = `Einthusan ${quality} (AJAX)`;
-                if (is_uhd && quality === 'HD') {
-                    streamTitle = `UHD 💎 ${streamTitle}`;
-                }
+                const qualityLabel = (is_uhd && quality === 'HD') ? 'UHD 💎' : quality;
+                streamTitle = `${qualityLabel} - ${langCode} - ${movieName} (AJAX)`;
                 return { title: streamTitle, url: streamData.HLSLink };
             }
         }
@@ -201,19 +203,18 @@ async function getStreamUrls(movie) {
     
     const streams = [];
 
-    // Only attempt to get HD streams if the user has provided premium credentials.
     if (isAuthenticated) {
+        // R9: Pass the full movie object down.
         let hdStream = await fetchStream(movie, 'HD');
         if (hdStream) {
             streams.push(replaceIpInStreamUrl(hdStream));
         }
     }
     
-    // Always attempt to get the SD stream.
+    // R9: Pass the full movie object down.
     let sdStream = await fetchStream(movie, 'SD');
     if (sdStream) {
         sdStream = replaceIpInStreamUrl(sdStream);
-        // Avoid adding duplicate URLs if HD and SD point to the same file.
         if (!streams.find(s => s.url === sdStream.url)) {
             streams.push(sdStream);
         }
