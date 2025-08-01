@@ -5,6 +5,18 @@ let pool = null;
 const ADDON_DB_NAME = 'stremio_addons';
 const SCHEMA_NAME = 'einthusan';
 
+// R4 & R7: Defines the language priority order for SQL queries.
+const LANG_PRIORITY_ORDER = `
+    CASE lang
+        WHEN 'tamil' THEN 1
+        WHEN 'malayalam' THEN 2
+        WHEN 'telugu' THEN 3
+        WHEN 'hindi' THEN 4
+        WHEN 'kannada' THEN 5
+        ELSE 99
+    END
+`;
+
 async function migrateDatabaseSchema() {
     const client = await pool.connect();
     try {
@@ -115,7 +127,8 @@ async function initializeDatabase() {
             CREATE TABLE IF NOT EXISTS ${SCHEMA_NAME}.scrape_progress (
                 lang VARCHAR(50) PRIMARY KEY,
                 last_page_scraped INT NOT NULL DEFAULT 0,
-                updated_at TIMESTAMPTZ DEFAULT NOW()
+                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                full_scrape_completed BOOLEAN NOT NULL DEFAULT FALSE
             );
         `);
         console.log('[DB] Base tables are ready.');
@@ -145,83 +158,57 @@ async function upsertMovie(movie) {
     await pool.query(query, values).catch(err => console.error(`[DB] Error upserting movie ${movie.title}:`, err));
 }
 
-/**
- * A centralized function to build a Stremio Meta Object from a database row.
- * This is the definitive, SDK-compliant way to structure the object.
- * @param {object} movie - A movie record from the database.
- * @returns {object} A Stremio Meta Object.
- */
-function buildMeta(movie) {
-    if (!movie) return null;
-
-    const meta = {
-        // The primary 'id' is ALWAYS our internal, unique ID. This preserves context.
-        id: movie.id,
-        type: 'movie',
-        name: movie.name || movie.title,
-        poster: movie.poster,
-        background: movie.poster,
-        description: movie.description,
-        year: movie.year,
-        // ** REGRESSION FIX **: Ensure all necessary fields for the stream handler are included.
-        movie_page_url: movie.movie_page_url,
-        is_uhd: movie.is_uhd,
-    };
-
-    // ** THE FIX IS HERE **
-    // We add 'imdb_id' as a separate, top-level property.
-    // Stremio's aggregator is built to look for this specific property.
-    if (movie.imdb_id) {
-        meta.imdb_id = movie.imdb_id;
-    }
-
-    return meta;
-}
-
+// R4 & R5: Rewritten to enforce unique, prioritized listing.
 async function getMoviesForCatalog(lang, skip, limit) {
     const query = `
-        SELECT * FROM ${SCHEMA_NAME}.movies
-        WHERE lang = $1 ORDER BY published_at DESC NULLS LAST, title ASC LIMIT $2 OFFSET $3;
+        WITH RankedMovies AS (
+            SELECT
+                *,
+                ROW_NUMBER() OVER(PARTITION BY imdb_id ORDER BY ${LANG_PRIORITY_ORDER}) as rn
+            FROM ${SCHEMA_NAME}.movies
+            WHERE imdb_id IS NOT NULL
+        )
+        SELECT title, poster, imdb_id
+        FROM RankedMovies
+        WHERE rn = 1 AND lang = $1
+        ORDER BY published_at DESC NULLS LAST, title ASC
+        LIMIT $2 OFFSET $3;
     `;
     const res = await pool.query(query, [lang, limit, skip]);
-    // Map each database row to a correctly structured meta object.
-    return res.rows.map(buildMeta);
+    return res.rows;
 }
 
+// R4 & R5: Rewritten to enforce unique, prioritized listing for search.
 async function searchMovies(lang, searchTerm) {
     const query = `
-        SELECT * FROM ${SCHEMA_NAME}.movies
-        WHERE lang = $1 AND title ILIKE $2
+        WITH RankedMovies AS (
+            SELECT
+                *,
+                ROW_NUMBER() OVER(PARTITION BY imdb_id ORDER BY ${LANG_PRIORITY_ORDER}) as rn
+            FROM ${SCHEMA_NAME}.movies
+            WHERE imdb_id IS NOT NULL AND title ILIKE $2
+        )
+        SELECT title, poster, imdb_id
+        FROM RankedMovies
+        WHERE rn = 1 AND lang = $1
         ORDER BY year DESC, title ASC
         LIMIT 50;
     `;
     const values = [lang, `%${searchTerm}%`];
     const res = await pool.query(query, values);
-    return res.rows.map(buildMeta);
+    return res.rows;
 }
 
-async function getMovieForMeta(id) {
-    const query = `SELECT * FROM ${SCHEMA_NAME}.movies WHERE id = $1;`;
-    const res = await pool.query(query, [id]);
-    if (res.rows.length > 0) {
-        return { meta: buildMeta(res.rows[0]) };
-    }
-    return { meta: null };
-}
-
-async function getMovieByImdbId(imdbId) {
+// R7 & R8: New function to get only the highest-priority movie record for a given IMDb ID.
+async function getHighestPriorityMovie(imdbId) {
     const query = `
-        SELECT * FROM ${SCHEMA_NAME}.movies 
-        WHERE imdb_id = $1 
-        ORDER BY is_uhd DESC, published_at DESC NULLS LAST 
+        SELECT * FROM ${SCHEMA_NAME}.movies
+        WHERE imdb_id = $1
+        ORDER BY ${LANG_PRIORITY_ORDER}
         LIMIT 1;
     `;
     const res = await pool.query(query, [imdbId]);
-    if (res.rows.length > 0) {
-        // This function will now return the full, correctly structured meta object.
-        return { meta: buildMeta(res.rows[0]) };
-    }
-    return { meta: null };
+    return res.rows.length > 0 ? res.rows[0] : null;
 }
 
 async function getScrapeProgress(lang) {
@@ -301,8 +288,7 @@ module.exports = {
     upsertMovie,
     getMoviesForCatalog,
     searchMovies,
-    getMovieForMeta,
-    getMovieByImdbId,
+    getHighestPriorityMovie,
     getScrapeProgress,
     updateScrapeProgress,
     setFullScrapeCompleted,
